@@ -8,6 +8,8 @@ import argparse
 import sys
 import os
 import whisper
+import tempfile
+import shutil
 from pathlib import Path
 
 
@@ -15,47 +17,72 @@ def transcribe_audio_streaming(audio_file, model_name="small", output_format="tx
     """
     Stream transcription results as they are processed
     """
-    if not os.path.exists(audio_file):
-        print(f"Error: Audio file '{audio_file}' not found.", file=sys.stderr)
-        return False
-    
+    temp_file = None
     try:
+        # Handle stdin input
+        if audio_file == "/dev/stdin":
+            print("Reading audio from stdin...", file=sys.stderr)
+            # Create a temporary file to store the audio data
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".m4a")
+            shutil.copyfileobj(sys.stdin.buffer, temp_file)
+            temp_file.close()
+            audio_file = temp_file.name
+            print(f"Audio saved to temporary file: {audio_file}", file=sys.stderr)
+        
+        if not os.path.exists(audio_file):
+            print(f"Error: Audio file '{audio_file}' not found.", file=sys.stderr)
+            return False
+        
         print(f"Loading Whisper model: {model_name}", file=sys.stderr)
         model = whisper.load_model(model_name)
         
         print(f"Transcribing: {audio_file}", file=sys.stderr)
-        print("Streaming transcription...", file=sys.stderr)
+        print("Processing audio...", file=sys.stderr)
         
-        # Load audio and get segments
-        audio = whisper.load_audio(audio_file)
-        audio = whisper.pad_or_trim(audio)
+        # Transcribe the audio file with more options
+        result = model.transcribe(
+            audio_file, 
+            verbose=False,
+            word_timestamps=False,
+            temperature=0.0,
+            best_of=1
+        )
         
-        # Make log-Mel spectrogram and move to the same device as the model
-        mel = whisper.log_mel_spectrogram(audio).to(model.device)
+        # Show detected language
+        if result and 'language' in result:
+            print(f"Detected language: {result['language']}", file=sys.stderr)
         
-        # Detect the spoken language
-        _, probs = model.detect_language(mel)
-        detected_lang = max(probs, key=probs.get)
-        print(f"Detected language: {detected_lang}", file=sys.stderr)
-        
-        # Decode the audio
-        options = whisper.DecodingOptions(fp16=False)
-        result = whisper.decode(model, mel, options)
-        
-        # Stream the result immediately
-        print(result.text)
+        # Check if we have a result
+        if result and 'text' in result:
+            # Output the full transcribed text
+            transcribed_text = result['text'].strip()
+            if transcribed_text:
+                print(transcribed_text, flush=True)
+                sys.stdout.flush()
+            else:
+                print("(No speech detected)", file=sys.stderr)
+                # Check if there are segments with text
+                if 'segments' in result and result['segments']:
+                    print("Available segments:", file=sys.stderr)
+                    for i, segment in enumerate(result['segments']):
+                        print(f"  Segment {i}: '{segment.get('text', '')}'", file=sys.stderr)
+        else:
+            print("(Transcription failed - no result)", file=sys.stderr)
         
         # Save to file if needed
         if output_format != "txt" or output_dir:
-            # For non-streaming output formats, we need the full result
-            full_result = model.transcribe(audio_file, verbose=False)
-            save_output_file(full_result, audio_file, output_format, output_dir)
+            save_output_file(result, audio_file, output_format, output_dir)
         
+        print("Transcription complete!", file=sys.stderr)
         return True
         
     except Exception as e:
         print(f"Error during transcription: {str(e)}", file=sys.stderr)
         return False
+    finally:
+        # Clean up temporary file
+        if temp_file and os.path.exists(temp_file.name):
+            os.unlink(temp_file.name)
 
 
 def save_output_file(result, audio_file, output_format, output_dir):
