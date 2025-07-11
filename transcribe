@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# Whisper CLI Docker wrapper script
+# Usage: ./transcribe <audio_file> [additional_args...]
+
+if [ $# -eq 0 ]; then
+    echo "Usage: $0 <audio_file> [additional_args...]"
+    echo ""
+    echo "Examples:"
+    echo "  $0 audio.m4a"
+    echo "  $0 audio.wav --model base --format srt"
+    echo "  $0 audio.mp3 --format json --output-dir /audio"
+    echo ""
+    echo "Available models: tiny, base, small (default), medium, large"
+    echo "Available formats: txt (default), json, srt, vtt, tsv"
+    exit 1
+fi
+
+# Get the audio file path
+AUDIO_FILE="$1"
+shift  # Remove the first argument, keep the rest
+
+# Check if audio file exists
+if [ ! -f "$AUDIO_FILE" ]; then
+    echo "Error: Audio file '$AUDIO_FILE' not found."
+    exit 1
+fi
+
+# Get the directory containing the audio file
+AUDIO_DIR=$(dirname "$(realpath "$AUDIO_FILE")")
+AUDIO_BASENAME=$(basename "$AUDIO_FILE")
+
+# Create cache directory if it doesn't exist
+mkdir -p ~/.cache/whisper
+
+# Run the Docker container with cache volume mounted
+docker run --rm -v "$AUDIO_DIR":/audio -v ~/.cache/whisper:/root/.cache/whisper whisper-cli "/audio/$AUDIO_BASENAME" "$@"
