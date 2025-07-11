@@ -8,15 +8,10 @@ on:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        include:
-          - os: ubuntu-latest
-            platform: linux/amd64
-          - os: macos-latest  
-            platform: linux/arm64
+        platform: [linux/amd64, linux/arm64]
     
     steps:
     - name: Checkout repository
