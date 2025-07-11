@@ -18,9 +18,8 @@ WORKDIR /app
 # Copy transcription script
 COPY transcribe.py .
 
-# Create volume mount points for audio files and model cache
-VOLUME ["/audio"]
+# Create volume mount point for model cache
 VOLUME ["/root/.cache/whisper"]
 
-# Set default command
-ENTRYPOINT ["python", "transcribe.py"]
+# Set default command - expect audio file from stdin
+ENTRYPOINT ["python", "transcribe.py", "/dev/stdin"]

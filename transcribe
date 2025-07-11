@@ -4,15 +4,15 @@
 # Usage: ./transcribe <audio_file> [additional_args...]
 
 if [ $# -eq 0 ]; then
-    echo "Usage: $0 <audio_file> [additional_args...]"
-    echo ""
-    echo "Examples:"
-    echo "  $0 audio.m4a"
-    echo "  $0 audio.wav --model base --format srt"
-    echo "  $0 audio.mp3 --format json --output-dir /audio"
-    echo ""
-    echo "Available models: tiny, base, small (default), medium, large"
-    echo "Available formats: txt (default), json, srt, vtt, tsv"
+    echo "Usage: $0 <audio_file> [additional_args...]" >&2
+    echo "" >&2
+    echo "Examples:" >&2
+    echo "  $0 audio.m4a" >&2
+    echo "  $0 audio.wav --model base" >&2
+    echo "  $0 audio.mp3 --model medium" >&2
+    echo "" >&2
+    echo "Available models: tiny, base, small (default), medium, large" >&2
+    echo "Output: Transcribed text to stdout, progress to stderr" >&2
     exit 1
 fi
 
@@ -22,16 +22,13 @@ shift  # Remove the first argument, keep the rest
 
 # Check if audio file exists
 if [ ! -f "$AUDIO_FILE" ]; then
-    echo "Error: Audio file '$AUDIO_FILE' not found."
+    echo "Error: Audio file '$AUDIO_FILE' not found." >&2
     exit 1
 fi
-
-# Get the directory containing the audio file
-AUDIO_DIR=$(dirname "$(realpath "$AUDIO_FILE")")
-AUDIO_BASENAME=$(basename "$AUDIO_FILE")
 
 # Create cache directory if it doesn't exist
 mkdir -p ~/.cache/whisper
 
-# Run the Docker container with cache volume mounted
-docker run --rm -v "$AUDIO_DIR":/audio -v ~/.cache/whisper:/root/.cache/whisper whisper-cli "/audio/$AUDIO_BASENAME" "$@"
+# Run the Docker container, piping the audio file to stdin
+# Only mount the cache volume
+cat "$AUDIO_FILE" | docker run --rm -i -v ~/.cache/whisper:/root/.cache/whisper whisper-cli "$@"

@@ -24,14 +24,14 @@ def transcribe_audio(audio_file, model_name="small", output_format="txt", output
     
     # Check if audio file exists
     if not os.path.exists(audio_file):
-        print(f"Error: Audio file '{audio_file}' not found.")
+        print(f"Error: Audio file '{audio_file}' not found.", file=sys.stderr)
         return False
     
     try:
-        print(f"Loading Whisper model: {model_name}")
+        print(f"Loading Whisper model: {model_name}", file=sys.stderr)
         model = whisper.load_model(model_name)
         
-        print(f"Transcribing: {audio_file}")
+        print(f"Transcribing: {audio_file}", file=sys.stderr)
         result = model.transcribe(audio_file)
         
         # Prepare output filename
@@ -85,13 +85,13 @@ def transcribe_audio(audio_file, model_name="small", output_format="txt", output
                     text = segment["text"].strip().replace("\t", " ")
                     f.write(f"{start:.3f}\t{end:.3f}\t{text}\n")
         
-        print(f"Transcription completed and saved to: {output_file}")
-        print(f"Text: {result['text']}")
+        print(f"Transcription completed and saved to: {output_file}", file=sys.stderr)
+        print(result['text'])
         
         return True
         
     except Exception as e:
-        print(f"Error during transcription: {str(e)}")
+        print(f"Error during transcription: {str(e)}", file=sys.stderr)
         return False
 
 
