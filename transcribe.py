@@ -13,7 +13,19 @@ import shutil
 from pathlib import Path
 
 
-def transcribe_audio_streaming(audio_file, model_name="small", output_format="txt", output_dir=None):
+def detect_language_from_filename(filename):
+    """
+    Detect language from filename pattern like file_en.m4a, file_de.m4a, etc.
+    Returns language code or None if not detected
+    """
+    import re
+    # Pattern to match _<langcode>.<ext> at the end of filename
+    pattern = r'_([a-z]{2})\.[^.]+$'
+    match = re.search(pattern, filename.lower())
+    return match.group(1) if match else None
+
+
+def transcribe_audio_streaming(audio_file, model_name="small", output_format="txt", output_dir=None, language=None):
     """
     Stream transcription results as they are processed
     """
@@ -39,14 +51,35 @@ def transcribe_audio_streaming(audio_file, model_name="small", output_format="tx
         print(f"Transcribing: {audio_file}", file=sys.stderr)
         print("Processing audio...", file=sys.stderr)
         
-        # Transcribe the audio file with more options
-        result = model.transcribe(
-            audio_file, 
-            verbose=False,
-            word_timestamps=False,
-            temperature=0.0,
-            best_of=1
-        )
+        # Determine language settings
+        if not language:
+            # Check if language is specified in filename
+            original_filename = audio_file
+            if temp_file:
+                # Get the original filename from environment variable
+                original_filename = os.environ.get('ORIGINAL_FILENAME', audio_file)
+            
+            detected_lang = detect_language_from_filename(original_filename)
+            if detected_lang:
+                language = detected_lang
+                print(f"Language detected from filename: {language}", file=sys.stderr)
+            else:
+                # Default to German and English
+                language = None  # Let Whisper auto-detect, but we'll hint with German/English
+                print("Using default languages: German and English", file=sys.stderr)
+        
+        # Transcribe the audio file with language settings
+        transcribe_options = {
+            'verbose': False,
+            'word_timestamps': False,
+            'temperature': 0.0,
+            'best_of': 1
+        }
+        
+        if language:
+            transcribe_options['language'] = language
+        
+        result = model.transcribe(audio_file, **transcribe_options)
         
         # Show detected language
         if result and 'language' in result:
@@ -133,7 +166,7 @@ def save_output_file(result, audio_file, output_format, output_dir):
         print(f"Output saved to: {output_file}", file=sys.stderr)
 
 
-def transcribe_audio(audio_file, model_name="small", output_format="txt", output_dir=None):
+def transcribe_audio(audio_file, model_name="small", output_format="txt", output_dir=None, language=None):
     """
     Transcribe an audio file using OpenAI Whisper
     
@@ -156,12 +189,23 @@ def transcribe_audio(audio_file, model_name="small", output_format="txt", output
         print(f"Transcribing: {audio_file}", file=sys.stderr)
         print("Processing audio...", file=sys.stderr)
         
-        # Stream transcription results
-        segments = model.transcribe(audio_file, verbose=True)
-        print("Transcription complete!", file=sys.stderr)
+        # Determine language settings (same as streaming function)
+        if not language:
+            original_filename = os.environ.get('ORIGINAL_FILENAME', audio_file)
+            detected_lang = detect_language_from_filename(original_filename)
+            if detected_lang:
+                language = detected_lang
+                print(f"Language detected from filename: {language}", file=sys.stderr)
+            else:
+                print("Using default languages: German and English", file=sys.stderr)
         
-        # For streaming, we'll output segments as they're processed
-        result = segments
+        # Transcribe with language settings
+        transcribe_options = {'verbose': True}
+        if language:
+            transcribe_options['language'] = language
+        
+        result = model.transcribe(audio_file, **transcribe_options)
+        print("Transcription complete!", file=sys.stderr)
         
         # Prepare output filename
         audio_path = Path(audio_file)
@@ -241,8 +285,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python transcribe.py audio.wav                    # Stream to stdout
-  python transcribe.py audio.m4a --model small      # Stream with small model
+  python transcribe.py audio.wav                    # Stream to stdout (auto-detect language)
+  python transcribe.py meeting_en.m4a               # Auto-detect English from filename
+  python transcribe.py presentation_de.wav          # Auto-detect German from filename
+  python transcribe.py audio.mp3 --language en      # Force English
   python transcribe.py audio.mp3 --format srt       # Save SRT file
   python transcribe.py audio.wav --output-dir ./out # Save to directory
   
@@ -285,6 +331,11 @@ Available models (by size and accuracy):
         help="Stream transcription results in real-time (default: enabled)"
     )
     
+    parser.add_argument(
+        "--language", "-l",
+        help="Force language (e.g., 'en', 'de'). If not specified, auto-detects from filename or defaults to German/English"
+    )
+    
     args = parser.parse_args()
     
     # Use streaming by default for txt output to stdout
@@ -293,14 +344,16 @@ Available models (by size and accuracy):
             args.audio_file,
             args.model,
             args.format,
-            args.output_dir
+            args.output_dir,
+            args.language
         )
     else:
         success = transcribe_audio(
             args.audio_file,
             args.model,
             args.format,
-            args.output_dir
+            args.output_dir,
+            args.language
         )
     
     sys.exit(0 if success else 1)

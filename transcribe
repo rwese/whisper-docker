@@ -7,9 +7,16 @@ if [ $# -eq 0 ]; then
     echo "Usage: $0 <audio_file> [additional_args...]" >&2
     echo "" >&2
     echo "Examples:" >&2
-    echo "  $0 audio.m4a" >&2
-    echo "  $0 audio.wav --model base" >&2
-    echo "  $0 audio.mp3 --model medium" >&2
+    echo "  $0 audio.m4a                    # Auto-detect language" >&2
+    echo "  $0 meeting_en.m4a               # Auto-detect English from filename" >&2
+    echo "  $0 presentation_de.wav          # Auto-detect German from filename" >&2
+    echo "  $0 audio.wav --model base       # Use base model" >&2
+    echo "  $0 audio.mp3 --language en      # Force English" >&2
+    echo "" >&2
+    echo "Language detection:" >&2
+    echo "  - Filename with '_en', '_de', etc. auto-detects language" >&2
+    echo "  - Otherwise defaults to German/English auto-detection" >&2
+    echo "  - Use --language to force specific language" >&2
     echo "" >&2
     echo "Available models: tiny, base, small (default), medium, large" >&2
     echo "Output: Transcribed text to stdout, progress to stderr" >&2
@@ -30,5 +37,6 @@ fi
 mkdir -p ~/.cache/whisper
 
 # Run the Docker container, piping the audio file to stdin
-# Only mount the cache volume
-cat "$AUDIO_FILE" | docker run --rm -i -v ~/.cache/whisper:/root/.cache/whisper whisper-cli "$@"
+# Pass the original filename as an environment variable for language detection
+BASENAME=$(basename "$AUDIO_FILE")
+cat "$AUDIO_FILE" | docker run --rm -i -e ORIGINAL_FILENAME="$BASENAME" -v ~/.cache/whisper:/root/.cache/whisper whisper-cli "$@"
