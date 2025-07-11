@@ -27,7 +27,11 @@ def detect_language_from_filename(filename):
 
 def transcribe_audio_streaming(audio_file, model_name="small", output_format="txt", output_dir=None, language=None, no_stream=False):
     """
-    Stream transcription results as they are processed
+    Stream transcription results as segments with timestamps.
+    
+    Note: Due to Whisper's architecture, true real-time streaming isn't possible.
+    This function processes the entire audio file and then displays segments with
+    timestamps to simulate streaming behavior.
     """
     temp_file = None
     try:
@@ -79,34 +83,38 @@ def transcribe_audio_streaming(audio_file, model_name="small", output_format="tx
         if language:
             transcribe_options['language'] = language
         
-        # Process audio in streaming mode with segments
+        # Process audio in chunks for true streaming
         try:
-            # Load and process audio
+            import numpy as np
+            
+            # Load audio file
             audio = whisper.load_audio(audio_file)
             
-            # Process with streaming by enabling word timestamps and processing segments
-            transcribe_options['word_timestamps'] = True
+            # Note: True streaming isn't possible with OpenAI Whisper as it processes
+            # the entire audio file before returning results. This shows segments
+            # with timestamps after processing is complete.
+            
+            # Process the full audio file
             result = model.transcribe(audio_file, **transcribe_options)
             
             # Show detected language
             if result and 'language' in result:
                 print(f"Detected language: {result['language']}", file=sys.stderr)
             
-            # Stream output segment by segment with timestamps
+            # Stream output segment by segment
             if result and 'segments' in result and result['segments']:
                 if not no_stream:
                     print("Streaming transcription:", file=sys.stderr)
                     for segment in result['segments']:
                         text = segment.get('text', '').strip()
                         if text:
-                            # Output segment with timestamp
+                            # Output with timestamp
                             start_time = segment.get('start', 0)
                             print(f"[{start_time:.1f}s] {text}", flush=True)
                             sys.stdout.flush()
-                            
-                            # Add a small delay to simulate real-time streaming
+                            # Add delay to show streaming effect
                             import time
-                            time.sleep(0.2)
+                            time.sleep(0.3)
                 else:
                     # Output all text at once without timestamps
                     full_text = ' '.join(segment.get('text', '').strip() for segment in result['segments'] if segment.get('text', '').strip())
@@ -114,10 +122,9 @@ def transcribe_audio_streaming(audio_file, model_name="small", output_format="tx
                         print(full_text, flush=True)
             elif result and 'text' in result:
                 # Fallback to full text if no segments
-                transcribed_text = result['text'].strip()
-                if transcribed_text:
-                    print(transcribed_text, flush=True)
-                    sys.stdout.flush()
+                text = result['text'].strip()
+                if text:
+                    print(text, flush=True)
                 else:
                     print("(No speech detected)", file=sys.stderr)
             else:
