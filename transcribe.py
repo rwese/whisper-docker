@@ -25,7 +25,7 @@ def detect_language_from_filename(filename):
     return match.group(1) if match else None
 
 
-def transcribe_audio_streaming(audio_file, model_name="small", output_format="txt", output_dir=None, language=None):
+def transcribe_audio_streaming(audio_file, model_name="small", output_format="txt", output_dir=None, language=None, no_stream=False):
     """
     Stream transcription results as they are processed
     """
@@ -79,28 +79,56 @@ def transcribe_audio_streaming(audio_file, model_name="small", output_format="tx
         if language:
             transcribe_options['language'] = language
         
-        result = model.transcribe(audio_file, **transcribe_options)
-        
-        # Show detected language
-        if result and 'language' in result:
-            print(f"Detected language: {result['language']}", file=sys.stderr)
-        
-        # Check if we have a result
-        if result and 'text' in result:
-            # Output the full transcribed text
-            transcribed_text = result['text'].strip()
-            if transcribed_text:
-                print(transcribed_text, flush=True)
-                sys.stdout.flush()
+        # Process audio in streaming mode with segments
+        try:
+            # Load and process audio
+            audio = whisper.load_audio(audio_file)
+            
+            # Process with streaming by enabling word timestamps and processing segments
+            transcribe_options['word_timestamps'] = True
+            result = model.transcribe(audio_file, **transcribe_options)
+            
+            # Show detected language
+            if result and 'language' in result:
+                print(f"Detected language: {result['language']}", file=sys.stderr)
+            
+            # Stream output segment by segment with timestamps
+            if result and 'segments' in result and result['segments']:
+                if not no_stream:
+                    print("Streaming transcription:", file=sys.stderr)
+                    for segment in result['segments']:
+                        text = segment.get('text', '').strip()
+                        if text:
+                            # Output segment with timestamp
+                            start_time = segment.get('start', 0)
+                            print(f"[{start_time:.1f}s] {text}", flush=True)
+                            sys.stdout.flush()
+                            
+                            # Add a small delay to simulate real-time streaming
+                            import time
+                            time.sleep(0.2)
+                else:
+                    # Output all text at once without timestamps
+                    full_text = ' '.join(segment.get('text', '').strip() for segment in result['segments'] if segment.get('text', '').strip())
+                    if full_text:
+                        print(full_text, flush=True)
+            elif result and 'text' in result:
+                # Fallback to full text if no segments
+                transcribed_text = result['text'].strip()
+                if transcribed_text:
+                    print(transcribed_text, flush=True)
+                    sys.stdout.flush()
+                else:
+                    print("(No speech detected)", file=sys.stderr)
             else:
-                print("(No speech detected)", file=sys.stderr)
-                # Check if there are segments with text
-                if 'segments' in result and result['segments']:
-                    print("Available segments:", file=sys.stderr)
-                    for i, segment in enumerate(result['segments']):
-                        print(f"  Segment {i}: '{segment.get('text', '')}'", file=sys.stderr)
-        else:
-            print("(Transcription failed - no result)", file=sys.stderr)
+                print("(Transcription failed - no result)", file=sys.stderr)
+                
+        except Exception as e:
+            print(f"Error during streaming: {e}", file=sys.stderr)
+            # Fallback to regular processing
+            result = model.transcribe(audio_file, **transcribe_options)
+            if result and 'text' in result:
+                print(result['text'].strip(), flush=True)
         
         # Save to file if needed
         if output_format != "txt" or output_dir:
@@ -326,9 +354,9 @@ Available models (by size and accuracy):
     )
     
     parser.add_argument(
-        "--stream", "-s",
+        "--no-stream",
         action="store_true",
-        help="Stream transcription results in real-time (default: enabled)"
+        help="Disable streaming output (output all text at once)"
     )
     
     parser.add_argument(
@@ -345,7 +373,8 @@ Available models (by size and accuracy):
             args.model,
             args.format,
             args.output_dir,
-            args.language
+            args.language,
+            args.no_stream
         )
     else:
         success = transcribe_audio(
