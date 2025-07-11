@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Python dependencies
 RUN pip install --no-cache-dir \
-    openai-whisper \
+    faster-whisper \
     torch \
     torchaudio
 

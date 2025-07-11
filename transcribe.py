@@ -7,10 +7,10 @@ Self-contained script for transcribing audio files using OpenAI Whisper
 import argparse
 import sys
 import os
-import whisper
 import tempfile
 import shutil
 from pathlib import Path
+from faster_whisper import WhisperModel
 
 
 def detect_language_from_filename(filename):
@@ -50,7 +50,7 @@ def transcribe_audio_streaming(audio_file, model_name="small", output_format="tx
             return False
         
         print(f"Loading Whisper model: {model_name}", file=sys.stderr)
-        model = whisper.load_model(model_name)
+        model = WhisperModel(model_name, device="cpu", compute_type="int8")
         
         print(f"Transcribing: {audio_file}", file=sys.stderr)
         print("Processing audio...", file=sys.stderr)
@@ -69,73 +69,63 @@ def transcribe_audio_streaming(audio_file, model_name="small", output_format="tx
                 print(f"Language detected from filename: {language}", file=sys.stderr)
             else:
                 # Default to German and English
-                language = None  # Let Whisper auto-detect, but we'll hint with German/English
+                language = None  # Let Whisper auto-detect
                 print("Using default languages: German and English", file=sys.stderr)
         
-        # Transcribe the audio file with language settings
-        transcribe_options = {
-            'verbose': False,
-            'word_timestamps': False,
-            'temperature': 0.0,
-            'best_of': 1
-        }
-        
-        if language:
-            transcribe_options['language'] = language
-        
-        # Process audio in chunks for true streaming
+        # True streaming with faster-whisper
         try:
-            import numpy as np
+            print("Starting streaming transcription...", file=sys.stderr)
             
-            # Load audio file
-            audio = whisper.load_audio(audio_file)
-            
-            # Note: True streaming isn't possible with OpenAI Whisper as it processes
-            # the entire audio file before returning results. This shows segments
-            # with timestamps after processing is complete.
-            
-            # Process the full audio file
-            result = model.transcribe(audio_file, **transcribe_options)
+            # Use faster-whisper for true streaming
+            segments, info = model.transcribe(
+                audio_file,
+                beam_size=5,
+                word_timestamps=True,
+                language=language
+            )
             
             # Show detected language
-            if result and 'language' in result:
-                print(f"Detected language: {result['language']}", file=sys.stderr)
+            print(f"Detected language: {info.language}", file=sys.stderr)
+            print(f"Detected language probability: {info.language_probability:.2f}", file=sys.stderr)
             
-            # Stream output segment by segment
-            if result and 'segments' in result and result['segments']:
-                if not no_stream:
-                    print("Streaming transcription:", file=sys.stderr)
-                    for segment in result['segments']:
-                        text = segment.get('text', '').strip()
-                        if text:
-                            # Output with timestamp
-                            start_time = segment.get('start', 0)
-                            print(f"[{start_time:.1f}s] {text}", flush=True)
-                            sys.stdout.flush()
-                            # Add delay to show streaming effect
-                            import time
-                            time.sleep(0.3)
-                else:
-                    # Output all text at once without timestamps
-                    full_text = ' '.join(segment.get('text', '').strip() for segment in result['segments'] if segment.get('text', '').strip())
-                    if full_text:
-                        print(full_text, flush=True)
-            elif result and 'text' in result:
-                # Fallback to full text if no segments
-                text = result['text'].strip()
+            if not no_stream:
+                print("Streaming transcription:", file=sys.stderr)
+            
+            # Iterate over segments as they are processed (TRUE STREAMING!)
+            all_segments = []
+            for segment in segments:
+                text = segment.text.strip()
                 if text:
-                    print(text, flush=True)
-                else:
-                    print("(No speech detected)", file=sys.stderr)
-            else:
-                print("(Transcription failed - no result)", file=sys.stderr)
+                    all_segments.append(segment)
+                    if not no_stream:
+                        # Output with timestamp - this happens as segments are processed!
+                        print(f"[{segment.start:.1f}s] {text}", flush=True)
+                        sys.stdout.flush()
+                    else:
+                        # For no-stream mode, we'll collect all segments first
+                        pass
+            
+            # For no-stream mode, output all text at once
+            if no_stream:
+                full_text = ' '.join(segment.text.strip() for segment in all_segments)
+                if full_text:
+                    print(full_text, flush=True)
+            
+            # Create result object for file saving
+            result = {
+                'text': ' '.join(segment.text.strip() for segment in all_segments),
+                'segments': [{'start': s.start, 'end': s.end, 'text': s.text} for s in all_segments],
+                'language': info.language
+            }
                 
         except Exception as e:
             print(f"Error during streaming: {e}", file=sys.stderr)
-            # Fallback to regular processing
-            result = model.transcribe(audio_file, **transcribe_options)
-            if result and 'text' in result:
-                print(result['text'].strip(), flush=True)
+            # Fallback to basic processing
+            segments, info = model.transcribe(audio_file, language=language)
+            full_text = ' '.join(segment.text.strip() for segment in segments)
+            if full_text:
+                print(full_text, flush=True)
+            result = {'text': full_text, 'segments': [], 'language': info.language}
         
         # Save to file if needed
         if output_format != "txt" or output_dir:
@@ -219,7 +209,7 @@ def transcribe_audio(audio_file, model_name="small", output_format="txt", output
     
     try:
         print(f"Loading Whisper model: {model_name}", file=sys.stderr)
-        model = whisper.load_model(model_name)
+        model = WhisperModel(model_name, device="cpu", compute_type="int8")
         
         print(f"Transcribing: {audio_file}", file=sys.stderr)
         print("Processing audio...", file=sys.stderr)
@@ -234,13 +224,16 @@ def transcribe_audio(audio_file, model_name="small", output_format="txt", output
             else:
                 print("Using default languages: German and English", file=sys.stderr)
         
-        # Transcribe with language settings
-        transcribe_options = {'verbose': True}
-        if language:
-            transcribe_options['language'] = language
-        
-        result = model.transcribe(audio_file, **transcribe_options)
+        # Transcribe with faster-whisper
+        segments, info = model.transcribe(audio_file, language=language)
         print("Transcription complete!", file=sys.stderr)
+        
+        # Convert to old format for compatibility
+        result = {
+            'text': ' '.join(segment.text.strip() for segment in segments),
+            'segments': [{'start': s.start, 'end': s.end, 'text': s.text} for s in segments],
+            'language': info.language
+        }
         
         # Prepare output filename
         audio_path = Path(audio_file)
