@@ -24,10 +24,10 @@ jobs:
             runner: ubuntu-24.04-arm
             docker-platform: linux/arm64
             cache-scope: linux-arm64
-          - platform: windows/amd64
-            runner: windows-latest
-            docker-platform: windows/amd64
-            cache-scope: windows-amd64
+          # - platform: windows/amd64
+          #   runner: windows-latest
+          #   docker-platform: windows/amd64
+          #   cache-scope: windows-amd64
     
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -160,8 +160,7 @@ jobs:
           # Create latest manifest
           docker manifest create ${BASE_TAG}:latest \
             ${BASE_TAG}:latest-linux-amd64 \
-            ${BASE_TAG}:latest-linux-arm64 \
-            ${BASE_TAG}:latest-windows-amd64
+            ${BASE_TAG}:latest-linux-arm64
           docker manifest push ${BASE_TAG}:latest
         fi
         
@@ -170,7 +169,6 @@ jobs:
           BRANCH_NAME=$(echo ${{ github.ref_name }} | tr '/' '-')
           docker manifest create ${BASE_TAG}:${BRANCH_NAME} \
             ${BASE_TAG}:${BRANCH_NAME}-linux-amd64 \
-            ${BASE_TAG}:${BRANCH_NAME}-linux-arm64 \
-            ${BASE_TAG}:${BRANCH_NAME}-windows-amd64
+            ${BASE_TAG}:${BRANCH_NAME}-linux-arm64
           docker manifest push ${BASE_TAG}:${BRANCH_NAME}
         fi
