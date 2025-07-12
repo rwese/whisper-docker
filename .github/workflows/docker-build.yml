@@ -19,12 +19,15 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
             docker-platform: linux/amd64
+            cache-scope: linux-amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             docker-platform: linux/arm64
+            cache-scope: linux-arm64
           - platform: windows/amd64
             runner: windows-latest
             docker-platform: windows/amd64
+            cache-scope: windows-amd64
     
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -70,12 +73,12 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
-          type=ref,event=branch,suffix=-${{ matrix.platform }}
-          type=ref,event=pr,suffix=-${{ matrix.platform }}
-          type=semver,pattern={{version}},suffix=-${{ matrix.platform }}
-          type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.platform }}
-          type=semver,pattern={{major}},suffix=-${{ matrix.platform }}
-          type=raw,value=latest-${{ matrix.platform }},enable={{is_default_branch}}
+          type=ref,event=branch,suffix=-${{ matrix.cache-scope }}
+          type=ref,event=pr,suffix=-${{ matrix.cache-scope }}
+          type=semver,pattern={{version}},suffix=-${{ matrix.cache-scope }}
+          type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.cache-scope }}
+          type=semver,pattern={{major}},suffix=-${{ matrix.cache-scope }}
+          type=raw,value=latest-${{ matrix.cache-scope }},enable={{is_default_branch}}
         flavor: |
           latest=false
     
@@ -89,11 +92,11 @@ jobs:
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: |
-          type=gha,scope=${{ matrix.platform }}
-          type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.platform }}
+          type=gha,scope=${{ matrix.cache-scope }}
+          type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.cache-scope }}
         cache-to: |
-          type=gha,mode=max,scope=${{ matrix.platform }}
-          type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.platform }},mode=max
+          type=gha,mode=max,scope=${{ matrix.cache-scope }}
+          type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.cache-scope }},mode=max
         build-args: |
           BUILDKIT_INLINE_CACHE=1
         target: final
@@ -103,8 +106,18 @@ jobs:
       shell: powershell
       run: |
         # Build Windows container with specific base image
-        $tags = "${{ steps.meta.outputs.tags }}" -split "`n"
-        $tagArgs = $tags | ForEach-Object { "--tag", $_ }
+        $tagString = "${{ steps.meta.outputs.tags }}"
+        $tags = $tagString -split "`r?`n" | Where-Object { $_.Trim() -ne "" }
+        $tagArgs = @()
+        foreach ($tag in $tags) {
+          $cleanTag = $tag.Trim()
+          if ($cleanTag) {
+            $tagArgs += "--tag"
+            $tagArgs += $cleanTag
+          }
+        }
+        
+        Write-Output "Building with tags: $($tags -join ', ')"
         
         docker build --platform ${{ matrix.docker-platform }} `
           --file Dockerfile.windows `
@@ -114,7 +127,11 @@ jobs:
         
         if ($LASTEXITCODE -eq 0 -and "${{ github.event_name }}" -ne "pull_request") {
           foreach ($tag in $tags) {
-            docker push $tag
+            $cleanTag = $tag.Trim()
+            if ($cleanTag) {
+              Write-Output "Pushing $cleanTag"
+              docker push $cleanTag
+            }
           }
         }
 
@@ -142,9 +159,9 @@ jobs:
         if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
           # Create latest manifest
           docker manifest create ${BASE_TAG}:latest \
-            ${BASE_TAG}:latest-linux/amd64 \
-            ${BASE_TAG}:latest-linux/arm64 \
-            ${BASE_TAG}:latest-windows/amd64
+            ${BASE_TAG}:latest-linux-amd64 \
+            ${BASE_TAG}:latest-linux-arm64 \
+            ${BASE_TAG}:latest-windows-amd64
           docker manifest push ${BASE_TAG}:latest
         fi
         
@@ -152,8 +169,8 @@ jobs:
         if [[ "${{ github.ref_type }}" == "branch" ]]; then
           BRANCH_NAME=$(echo ${{ github.ref_name }} | tr '/' '-')
           docker manifest create ${BASE_TAG}:${BRANCH_NAME} \
-            ${BASE_TAG}:${BRANCH_NAME}-linux/amd64 \
-            ${BASE_TAG}:${BRANCH_NAME}-linux/arm64 \
-            ${BASE_TAG}:${BRANCH_NAME}-windows/amd64
+            ${BASE_TAG}:${BRANCH_NAME}-linux-amd64 \
+            ${BASE_TAG}:${BRANCH_NAME}-linux-arm64 \
+            ${BASE_TAG}:${BRANCH_NAME}-windows-amd64
           docker manifest push ${BASE_TAG}:${BRANCH_NAME}
         fi
