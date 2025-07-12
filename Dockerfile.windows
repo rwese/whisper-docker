@@ -1,0 +1,90 @@
+# syntax=docker/dockerfile:1
+# Windows Dockerfile for Whisper CLI
+# Uses Windows Server Core with Python
+
+# Use Windows Server Core 2022 with Python
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 as base
+
+# Install Python using Chocolatey
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# Install Chocolatey
+RUN Set-ExecutionPolicy Bypass -Scope Process -Force; \
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; \
+    iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+# Install Python 3.11 and FFmpeg
+RUN choco install python311 -y --no-progress; \
+    choco install ffmpeg -y --no-progress; \
+    refreshenv
+
+# Set Python in PATH
+ENV PATH="C:\Python311;C:\Python311\Scripts;${PATH}"
+
+# Verify installations
+RUN python --version; \
+    pip --version; \
+    ffmpeg -version
+
+# Dependencies stage
+FROM base as deps
+
+# Set working directory
+WORKDIR C:\app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install additional Windows-specific dependencies if needed
+RUN pip install --no-cache-dir pywin32
+
+# Final stage
+FROM deps as final
+
+# Copy application files
+COPY transcribe.py .
+COPY transcription_core.py .
+COPY web_service.py .
+COPY entrypoint.sh .
+COPY static/ ./static/
+
+# Convert entrypoint.sh to PowerShell script for Windows
+COPY <<EOF entrypoint.ps1
+# Windows PowerShell entrypoint script
+param(
+    [string[]]$Args = @()
+)
+
+if ($env:MODE -eq "web") {
+    Write-Host "Starting Whisper web service on Windows..."
+    python web_service.py
+} else {
+    Write-Host "Starting Whisper CLI on Windows..."
+    if ($Args.Count -eq 0) {
+        # Read from stdin if no arguments provided
+        python transcribe.py
+    } else {
+        python transcribe.py @Args
+    }
+}
+EOF
+
+# Set default environment variables
+ENV MODE=cli
+ENV HOST=0.0.0.0
+ENV PORT=8000
+
+# Create cache directory
+RUN mkdir C:\cache\whisper
+
+# Set volume for model cache
+VOLUME ["C:/cache/whisper"]
+
+# Expose port for web mode
+EXPOSE 8000
+
+# Use PowerShell entrypoint
+ENTRYPOINT ["powershell", "-File", "entrypoint.ps1"]
