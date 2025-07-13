@@ -116,7 +116,8 @@ jobs:
 
       - name: Create and push multi-arch manifest
         run: |
-          for tag in ${{ steps.meta-manifest.outputs.tags }}; do
+          readarray -t TAGS <<< "${{ steps.meta-manifest.outputs.tags }}"
+          for tag in "${TAGS[@]}"; do
             echo "Creating manifest for tag: $tag"
             docker buildx imagetools create -t "$tag" \
               "${tag}-linux-amd64" \
