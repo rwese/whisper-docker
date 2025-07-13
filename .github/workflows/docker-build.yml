@@ -57,8 +57,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.cache-scope }}
             type=semver,pattern={{major}},suffix=-${{ matrix.cache-scope }}
             type=raw,value=latest-${{ matrix.cache-scope }},enable={{is_default_branch}}
-          flavor:
-            latest: false
+          flavor: latest=false
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
