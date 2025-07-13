@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whisper Transcription Service</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .upload-area {
+            border: 2px dashed #007AFF;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            background: #f8f9fa;
+            margin-bottom: 20px;
+            transition: background-color 0.3s;
+        }
+        .upload-area:hover {
+            background: #e3f2fd;
+        }
+        .upload-area.dragover {
+            background: #bbdefb;
+            border-color: #1976d2;
+        }
+        .file-input {
+            display: none;
+        }
+        .upload-btn {
+            background: #007AFF;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .upload-btn:hover {
+            background: #0056b3;
+        }
+        .options {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .option-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        select, input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .transcribe-btn {
+            background: #28a745;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+        .transcribe-btn:hover {
+            background: #218838;
+        }
+        .transcribe-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .progress {
+            display: none;
+            background: #e9ecef;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .progress-bar {
+            background: #007AFF;
+            height: 6px;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 4px solid #28a745;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: #dc3545;
+        }
+        .download-links {
+            margin-top: 15px;
+        }
+        .download-link {
+            display: inline-block;
+            background: #17a2b8;
+            color: white;
+            padding: 8px 16px;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        .download-link:hover {
+            background: #138496;
+            color: white;
+        }
+        .segments {
+            margin-top: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .segment {
+            padding: 8px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .segment:last-child {
+            border-bottom: none;
+        }
+        .timestamp {
+            font-weight: bold;
+            color: #007AFF;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Whisper Transcription Service</h1>
+        
+        <form id="transcriptionForm">
+            <div class="upload-area" id="uploadArea">
+                <p>📁 Drag and drop an audio file here or click to select</p>
+                <input type="file" id="audioFile" class="file-input" accept="audio/*,video/*" required>
+                <button type="button" class="upload-btn" onclick="document.getElementById('audioFile').click()">
+                    Choose Audio File
+                </button>
+                <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                    Supported formats: MP3, WAV, M4A, FLAC, OGG, WMA, AAC, MP4, MOV, AVI, MKV
+                </p>
+            </div>
+            
+            <div class="options">
+                <div class="option-group">
+                    <label for="model">Whisper Model:</label>
+                    <select id="model" name="model">
+                        <option value="tiny">Tiny (~39 MB) - Fastest</option>
+                        <option value="base">Base (~142 MB) - Good balance</option>
+                        <option value="small" selected>Small (~466 MB) - Better accuracy</option>
+                        <option value="medium">Medium (~1.5 GB) - High accuracy</option>
+                        <option value="large">Large (~2.9 GB) - Highest accuracy</option>
+                    </select>
+                </div>
+                
+                <div class="option-group">
+                    <label for="language">Language (optional):</label>
+                    <input type="text" id="language" name="language" placeholder="e.g., en, de, fr (auto-detect if empty)">
+                </div>
+                
+                <div class="option-group">
+                    <label for="outputFormat">Output Format:</label>
+                    <select id="outputFormat" name="outputFormat">
+                        <option value="json" selected>JSON (with segments)</option>
+                        <option value="txt">Plain Text</option>
+                        <option value="srt">SRT Subtitles</option>
+                        <option value="vtt">WebVTT Subtitles</option>
+                        <option value="tsv">TSV (Tab-separated)</option>
+                    </select>
+                </div>
+                
+                <div class="option-group">
+                    <label for="processingMode">Processing Mode:</label>
+                    <select id="processingMode" name="processingMode">
+                        <option value="sync">Synchronous (wait for result)</option>
+                        <option value="async" selected>Asynchronous (background processing)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <button type="submit" class="transcribe-btn" id="transcribeBtn">
+                🚀 Start Transcription
+            </button>
+        </form>
+        
+        <div class="progress" id="progress">
+            <div class="progress-bar" id="progressBar"></div>
+            <p style="text-align: center; margin-top: 10px;">Processing your audio file...</p>
+        </div>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('audioFile');
+        const form = document.getElementById('transcriptionForm');
+        const transcribeBtn = document.getElementById('transcribeBtn');
+        const progress = document.getElementById('progress');
+        const progressBar = document.getElementById('progressBar');
+        const result = document.getElementById('result');
+
+        // Drag and drop functionality
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                updateFileName(files[0].name);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                updateFileName(e.target.files[0].name);
+            }
+        });
+
+        function updateFileName(fileName) {
+            const p = uploadArea.querySelector('p');
+            p.textContent = `📁 Selected: ${fileName}`;
+        }
+
+        // Form submission
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select an audio file');
+                return;
+            }
+            
+            formData.append('file', file);
+            formData.append('model', document.getElementById('model').value);
+            formData.append('output_format', document.getElementById('outputFormat').value);
+            
+            const language = document.getElementById('language').value;
+            if (language) {
+                formData.append('language', language);
+            }
+            
+            const processingMode = document.getElementById('processingMode').value;
+            
+            // Show progress
+            transcribeBtn.disabled = true;
+            progress.style.display = 'block';
+            result.innerHTML = '';
+            
+            if (processingMode === 'async') {
+                await handleAsyncProcessing(formData);
+            } else {
+                await handleSyncProcessing(formData);
+            }
+        });
+
+        async function handleSyncProcessing(formData) {
+            transcribeBtn.textContent = '⏳ Processing...';
+            
+            // Simulate progress
+            let progressValue = 0;
+            const progressInterval = setInterval(() => {
+                progressValue += Math.random() * 15;
+                if (progressValue > 90) progressValue = 90;
+                progressBar.style.width = progressValue + '%';
+            }, 500);
+            
+            try {
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                clearInterval(progressInterval);
+                progressBar.style.width = '100%';
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Transcription failed');
+                }
+                
+                const contentType = response.headers.get('content-type');
+                
+                if (contentType && contentType.includes('application/json')) {
+                    const data = await response.json();
+                    displayJsonResult(data);
+                } else {
+                    const text = await response.text();
+                    displayTextResult(text, document.getElementById('outputFormat').value);
+                }
+                
+            } catch (error) {
+                clearInterval(progressInterval);
+                displayError(error.message);
+            } finally {
+                transcribeBtn.disabled = false;
+                transcribeBtn.textContent = '🚀 Start Transcription';
+                progress.style.display = 'none';
+                progressBar.style.width = '0%';
+            }
+        }
+
+        async function handleAsyncProcessing(formData) {
+            transcribeBtn.textContent = '📤 Submitting...';
+            progressBar.style.width = '20%';
+            
+            try {
+                // Submit async task
+                const response = await fetch('/transcribe/async', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to submit task');
+                }
+                
+                const taskInfo = await response.json();
+                progressBar.style.width = '40%';
+                
+                if (taskInfo.duplicate) {
+                    displayAsyncResult(`✨ Found existing task for this file`, taskInfo);
+                } else {
+                    displayAsyncResult(`📋 Task submitted successfully`, taskInfo);
+                }
+                
+                // Start polling for result
+                pollTaskStatus(taskInfo.task_id);
+                
+            } catch (error) {
+                displayError(error.message);
+                transcribeBtn.disabled = false;
+                transcribeBtn.textContent = '🚀 Start Transcription';
+                progress.style.display = 'none';
+                progressBar.style.width = '0%';
+            }
+        }
+
+        async function pollTaskStatus(taskId) {
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/tasks/${taskId}`);
+                    if (!response.ok) {
+                        throw new Error('Failed to get task status');
+                    }
+                    
+                    const status = await response.json();
+                    updateTaskStatus(status);
+                    
+                    if (status.status === 'completed') {
+                        clearInterval(pollInterval);
+                        await fetchTaskResult(taskId);
+                    } else if (status.status === 'failed') {
+                        clearInterval(pollInterval);
+                        displayError(`Task failed: ${status.error_message}`);
+                        resetForm();
+                    }
+                    
+                } catch (error) {
+                    clearInterval(pollInterval);
+                    displayError(`Polling failed: ${error.message}`);
+                    resetForm();
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+
+        function updateTaskStatus(status) {
+            const statusMap = {
+                'pending': { text: '⏳ Queued for processing...', progress: 50 },
+                'processing': { text: '🔄 Processing audio...', progress: 75 },
+                'completed': { text: '✅ Processing complete!', progress: 100 },
+                'failed': { text: '❌ Processing failed', progress: 100 }
+            };
+            
+            const statusInfo = statusMap[status.status] || { text: status.status, progress: 60 };
+            transcribeBtn.textContent = statusInfo.text;
+            progressBar.style.width = statusInfo.progress + '%';
+        }
+
+        async function fetchTaskResult(taskId) {
+            try {
+                const response = await fetch(`/tasks/${taskId}/result`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch result');
+                }
+                
+                const contentType = response.headers.get('content-type');
+                
+                if (contentType && contentType.includes('application/json')) {
+                    const data = await response.json();
+                    displayAsyncJsonResult(data);
+                } else {
+                    const text = await response.text();
+                    displayTextResult(text, document.getElementById('outputFormat').value);
+                }
+                
+            } catch (error) {
+                displayError(`Failed to fetch result: ${error.message}`);
+            } finally {
+                resetForm();
+            }
+        }
+
+        function resetForm() {
+            transcribeBtn.disabled = false;
+            transcribeBtn.textContent = '🚀 Start Transcription';
+            progress.style.display = 'none';
+            progressBar.style.width = '0%';
+        }
+
+        function displayJsonResult(data) {
+            result.innerHTML = `
+                <div class="result">
+                    <h3>✅ Transcription Complete</h3>
+                    <p><strong>Language:</strong> ${data.language} (${(data.language_probability * 100).toFixed(1)}% confidence)</p>
+                    <p><strong>Model:</strong> ${data.model}</p>
+                    
+                    <h4>Transcript:</h4>
+                    <div style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd; margin: 10px 0;">
+                        ${data.text}
+                    </div>
+                    
+                    <div class="download-links">
+                        <button onclick="downloadText('${data.filename}_transcript.txt', \`${data.text}\`)" class="download-link">
+                            📄 Download TXT
+                        </button>
+                        <button onclick="downloadJson('${data.filename}_transcript.json', ${JSON.stringify(data).replace(/'/g, "\\'").replace(/"/g, '\\"')})" class="download-link">
+                            📋 Download JSON
+                        </button>
+                    </div>
+                    
+                    ${data.segments && data.segments.length > 0 ? `
+                        <h4>Segments (${data.segments.length}):</h4>
+                        <div class="segments">
+                            ${data.segments.map(segment => `
+                                <div class="segment">
+                                    <div class="timestamp">[${formatTime(segment.start)} → ${formatTime(segment.end)}]</div>
+                                    <div>${segment.text}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function displayTextResult(text, format) {
+            const formatNames = {
+                'txt': 'Plain Text',
+                'srt': 'SRT Subtitles',
+                'vtt': 'WebVTT Subtitles',
+                'tsv': 'TSV Data'
+            };
+            
+            result.innerHTML = `
+                <div class="result">
+                    <h3>✅ Transcription Complete</h3>
+                    <p><strong>Format:</strong> ${formatNames[format] || format.toUpperCase()}</p>
+                    
+                    <div style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd; margin: 10px 0; white-space: pre-wrap; font-family: monospace; max-height: 400px; overflow-y: auto;">
+                        ${text}
+                    </div>
+                    
+                    <div class="download-links">
+                        <button onclick="downloadText('transcript.${format}', \`${text.replace(/`/g, '\\`')}\`)" class="download-link">
+                            📄 Download ${format.toUpperCase()}
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function displayError(message) {
+            result.innerHTML = `
+                <div class="result error">
+                    <h3>❌ Error</h3>
+                    <p>${message}</p>
+                </div>
+            `;
+        }
+
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            if (hours > 0) {
+                return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            }
+            return `${minutes}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function downloadText(filename, content) {
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function displayAsyncResult(message, taskInfo) {
+            result.innerHTML = `
+                <div class="result">
+                    <h3>${message}</h3>
+                    <p><strong>Task ID:</strong> ${taskInfo.task_id}</p>
+                    <p><strong>File:</strong> ${taskInfo.filename}</p>
+                    <p><strong>File Hash:</strong> ${taskInfo.file_hash.substring(0, 16)}...</p>
+                    <p><strong>Created:</strong> ${new Date(taskInfo.created_at).toLocaleString()}</p>
+                    ${taskInfo.duplicate ? '<p><em>🔄 This file was processed before - reusing existing task</em></p>' : ''}
+                </div>
+            `;
+        }
+
+        function displayAsyncJsonResult(data) {
+            const taskMeta = data.task_metadata;
+            result.innerHTML = `
+                <div class="result">
+                    <h3>✅ Transcription Complete</h3>
+                    <p><strong>Task ID:</strong> ${taskMeta.task_id}</p>
+                    <p><strong>Language:</strong> ${data.language} (${(data.language_probability * 100).toFixed(1)}% confidence)</p>
+                    <p><strong>Model:</strong> ${taskMeta.model}</p>
+                    <p><strong>Processing Time:</strong> ${taskMeta.processing_duration_seconds?.toFixed(1)}s</p>
+                    <p><strong>Characters:</strong> ${data.character_count}</p>
+                    <p><strong>TTL Expires:</strong> ${new Date(taskMeta.ttl_expires_at).toLocaleString()}</p>
+                    
+                    <h4>Transcript:</h4>
+                    <div style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd; margin: 10px 0;">
+                        ${data.text}
+                    </div>
+                    
+                    <div class="download-links">
+                        <button onclick="downloadText('${taskMeta.filename}_transcript.txt', \`${data.text}\`)}" class="download-link">
+                            📄 Download TXT
+                        </button>
+                        <button onclick="downloadJson('${taskMeta.filename}_transcript.json', ${JSON.stringify(data).replace(/'/g, "\\\\'").replace(/"/g, '\\\\"')})" class="download-link">
+                            📋 Download JSON
+                        </button>
+                    </div>
+                    
+                    ${data.segments && data.segments.length > 0 ? `
+                        <h4>Segments (${data.segments.length}):</h4>
+                        <div class="segments">
+                            ${data.segments.map(segment => `
+                                <div class="segment">
+                                    <div class="timestamp">[${formatTime(segment.start)} → ${formatTime(segment.end)}]</div>
+                                    <div>${segment.text}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function downloadJson(filename, data) {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

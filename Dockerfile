@@ -22,11 +22,26 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 # Create working directory
 WORKDIR /app
 
-# Copy transcription script (this changes frequently, so put it last)
+# Copy application files (this changes frequently, so put it last)
 COPY transcribe.py .
+COPY transcription_core.py .
+COPY web_service.py .
+COPY test_api.py .
+COPY generate_client.py .
+COPY static/ ./static/
 
 # Create volume mount point for model cache
 VOLUME ["/root/.cache/whisper"]
 
-# Set default command - expect audio file from stdin
-ENTRYPOINT ["python", "transcribe.py", "/dev/stdin"]
+# Default environment variables
+ENV MODE=cli
+ENV PORT=8000
+ENV HOST=0.0.0.0
+
+# Expose web service port (dynamic based on PORT env var)
+
+
+# Dynamic entrypoint based on MODE environment variable
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]

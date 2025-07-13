@@ -1,0 +1,33 @@
+services:
+  whisper-web:
+    build: .
+    ports:
+      - "8020:8020"
+    environment:
+      - MODE=web
+      - HOST=0.0.0.0
+      - PORT=8020
+    volumes:
+      - whisper-cache:/root/.cache/whisper
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  whisper-cli:
+    build: .
+    environment:
+      - MODE=cli
+    volumes:
+      - whisper-cache:/root/.cache/whisper
+      - ./audio:/app/audio:ro  # Mount audio files directory (optional)
+    stdin_open: true
+    tty: true
+    profiles:
+      - cli  # Only start with --profile cli
+
+volumes:
+  whisper-cache:
+    driver: local

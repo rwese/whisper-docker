@@ -1,0 +1,8 @@
+# Storage directory for async transcription tasks
+# 
+# Structure:
+# - tasks/: Task metadata (JSON files)
+# - files/: Uploaded audio files (hash-named)
+# - results/: Transcription results (JSON files)
+#
+# Files in this directory have a 7-day TTL and are automatically cleaned up
