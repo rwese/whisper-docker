@@ -23,12 +23,7 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 WORKDIR /app
 
 # Copy application files (this changes frequently, so put it last)
-COPY transcribe.py .
-COPY transcription_core.py .
-COPY web_service.py .
-COPY test_api.py .
-COPY generate_client.py .
-COPY static/ ./static/
+COPY . .
 
 # Create volume mount point for model cache
 VOLUME ["/root/.cache/whisper"]
