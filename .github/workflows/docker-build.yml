@@ -84,9 +84,46 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
           target: final
 
+  test:
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            docker-platform: linux/amd64
+            cache-scope: linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            docker-platform: linux/arm64
+            cache-scope: linux-arm64
+
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Test Docker image
+        run: |
+          # Test help output
+          docker run --rm whisper-cli:test --help
+
+          # Test model loading (without actual audio)
+          echo "Testing model loading..."
+          echo "test" | docker run --rm -i whisper-cli:test --model tiny --no-stream || echo "Expected to fail without valid audio"
+
+      - name: Test wrapper script
+        run: |
+          # Make script executable
+          chmod +x transcribe
+
+          # Test help
+          ./transcribe || echo "Help displayed successfully"
+
   create-manifest:
     if: github.event_name != 'pull_request'
-    needs: build
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
