@@ -1,0 +1,66 @@
+# Git
+.git/
+
+# Docker
+.dockerignore
+Dockerfile
+Dockerfile.windows
+docker-compose.yml
+
+# Environment
+.env
+.envrc
+.venv/
+venv/
+.devbox/
+
+# Cache
+.cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test files
+test_*.py
+
+# Documentation
+README.md
+
+# Local data
+storage/
+
+# Scripts
+build.sh
+check_pipeline.py
+
+# macOS
+.DS_Store
+
+# Audio files
+*.m4a
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+*.wma
+
+
+
+# Claude temp
+.claude/
