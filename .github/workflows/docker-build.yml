@@ -1,5 +1,5 @@
 ---
-name: Build and Push Docker Images
+name: Build, Test and Push Docker Image
 
 on:
   push:
@@ -25,7 +25,6 @@ jobs:
             runner: ubuntu-24.04-arm
             docker-platform: linux/arm64
             cache-scope: linux-arm64
-
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -35,12 +34,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx (Linux)
-        if: startsWith(matrix.platform, 'linux')
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: |
-            network=host
 
       - name: Log in to Container Registry
         if: github.event_name != 'pull_request'
@@ -50,8 +45,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
+      - name: Extract metadata for architecture-specific image
+        id: meta-arch
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -62,57 +57,44 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.cache-scope }}
             type=semver,pattern={{major}},suffix=-${{ matrix.cache-scope }}
             type=raw,value=latest-${{ matrix.cache-scope }},enable={{is_default_branch}}
-          flavor: |
-            latest=false
+          flavor:
+            latest: false
 
-      - name: Build and push Docker image (Linux)
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: ${{ matrix.docker-platform }}
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: |
-            type=gha,scope=${{ matrix.cache-scope }}
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.cache-scope }}
-          cache-to: |
-            type=gha,mode=max,scope=${{ matrix.cache-scope }}
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.cache-scope }},mode=max
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
-          target: final
+          tags: ${{ steps.meta-arch.outputs.tags }}
+          labels: ${{ steps.meta-arch.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.cache-scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache-scope }}
 
-      - name: Test Docker image
+      - name: Test built image
         run: |
-          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
+          IMAGE_TAG=$(echo "${{ steps.meta-arch.outputs.tags }}" | head -n 1)
           echo "Testing image: $IMAGE_TAG"
           if [[ "${{ github.event_name }}" != "pull_request" ]]; then
             docker pull $IMAGE_TAG
           fi
           docker tag $IMAGE_TAG whisper-cli:test
+          docker tag $IMAGE_TAG whisper-cli
           docker run --rm whisper-cli:test --help
           echo "Testing model loading..."
           echo "test" | docker run --rm -i whisper-cli:test --model tiny --no-stream || echo "Expected to fail without valid audio"
-
-      - name: Test wrapper script
-        run: |
+          echo "Testing wrapper script..."
           chmod +x transcribe
           ./transcribe || echo "Help displayed successfully"
 
-  create-manifest:
+  publish-manifest:
     if: github.event_name != 'pull_request'
     needs: build-and-test
-    strategy:
-      matrix:
-        include:
-          - runner: ubuntu-latest
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Log in to Container Registry
         uses: docker/login-action@v3
@@ -121,26 +103,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract metadata for manifest
+        id: meta-manifest
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
       - name: Create and push multi-arch manifest
-        run: |-
-          BASE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            docker buildx imagetools create -t ${BASE_TAG}:latest \
-              ${BASE_TAG}:latest-linux-amd64 \
-              ${BASE_TAG}:latest-linux-arm64
-          fi
-          if [[ "${{ github.ref_type }}" == "branch" ]]; then
-            BRANCH_NAME=$(echo ${{ github.ref_name }} | tr '/' '-')
-            docker buildx imagetools create -t ${BASE_TAG}:${BRANCH_NAME} \
-              ${BASE_TAG}:${BRANCH_NAME}-linux-amd64 \
-              ${BASE_TAG}:${BRANCH_NAME}-linux-arm64
-          fi
-          if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            TAG="${{ github.ref_name }}"
-            MAJOR=$(echo $TAG | cut -d. -f1)
-            MINOR=$(echo $TAG | cut -d. -f1,2)
-            docker buildx imagetools create -t ${BASE_TAG}:${TAG} ${BASE_TAG}:${TAG}-linux-amd64 ${BASE_TAG}:${TAG}-linux-arm64
-            docker buildx imagetools create -t ${BASE_TAG}:${MINOR} ${BASE_TAG}:${MINOR}-linux-amd64 ${BASE_TAG}:${MINOR}-linux-arm64
-            docker buildx imagetools create -t ${BASE_TAG}:${MAJOR} ${BASE_TAG}:${MAJOR}-linux-amd64 ${BASE_TAG}:${MAJOR}-linux-arm64
-          fi
+        run: |
+          for tag in ${{ steps.meta-manifest.outputs.tags }}; do
+            echo "Creating manifest for tag: $tag"
+            docker buildx imagetools create -t $tag \
+              "${tag}-linux-amd64" \
+              "${tag}-linux-arm64"
+          done
 
