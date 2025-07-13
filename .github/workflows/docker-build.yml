@@ -1,11 +1,12 @@
+---
 name: Build and Push Docker Images
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*' ]
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   REGISTRY: ghcr.io
@@ -17,123 +18,71 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             docker-platform: linux/amd64
             cache-scope: linux-amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             docker-platform: linux/arm64
             cache-scope: linux-arm64
-          # - platform: windows/amd64
-          #   runner: windows-latest
-          #   docker-platform: windows/amd64
-          #   cache-scope: windows-amd64
-    
+
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Set up Docker Buildx (Linux)
-      if: startsWith(matrix.platform, 'linux')
-      uses: docker/setup-buildx-action@v3
-      with:
-        driver-opts: |
-          network=host
-    
-    - name: Set up Docker (Windows)
-      if: startsWith(matrix.platform, 'windows')
-      shell: powershell
-      run: |
-        # Enable experimental features for Windows containers
-        $config = @{
-          "experimental" = $true
-          "features" = @{
-            "buildkit" = $true
-          }
-        }
-        $config | ConvertTo-Json | Out-File -FilePath "$env:ProgramData\docker\config\daemon.json" -Encoding UTF8
-        Restart-Service docker
-    
-    - name: Log in to Container Registry
-      if: github.event_name != 'pull_request'
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        tags: |
-          type=ref,event=branch,suffix=-${{ matrix.cache-scope }}
-          type=ref,event=pr,suffix=-${{ matrix.cache-scope }}
-          type=semver,pattern={{version}},suffix=-${{ matrix.cache-scope }}
-          type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.cache-scope }}
-          type=semver,pattern={{major}},suffix=-${{ matrix.cache-scope }}
-          type=raw,value=latest-${{ matrix.cache-scope }},enable={{is_default_branch}}
-        flavor: |
-          latest=false
-    
-    - name: Build and push Docker image (Linux)
-      if: startsWith(matrix.platform, 'linux')
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        platforms: ${{ matrix.docker-platform }}
-        push: ${{ github.event_name != 'pull_request' }}
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: |
-          type=gha,scope=${{ matrix.cache-scope }}
-          type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.cache-scope }}
-        cache-to: |
-          type=gha,mode=max,scope=${{ matrix.cache-scope }}
-          type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.cache-scope }},mode=max
-        build-args: |
-          BUILDKIT_INLINE_CACHE=1
-        target: final
-    
-    - name: Build and push Docker image (Windows)
-      if: startsWith(matrix.platform, 'windows')
-      shell: powershell
-      run: |
-        # Build Windows container with specific base image
-        $tagString = "${{ steps.meta.outputs.tags }}"
-        $tags = $tagString -split "`r?`n" | Where-Object { $_.Trim() -ne "" }
-        $tagArgs = @()
-        foreach ($tag in $tags) {
-          $cleanTag = $tag.Trim()
-          if ($cleanTag) {
-            $tagArgs += "--tag"
-            $tagArgs += $cleanTag
-          }
-        }
-        
-        Write-Output "Building with tags: $($tags -join ', ')"
-        
-        docker build --platform ${{ matrix.docker-platform }} `
-          --file Dockerfile.windows `
-          $tagArgs `
-          --build-arg BUILDKIT_INLINE_CACHE=1 `
-          .
-        
-        if ($LASTEXITCODE -eq 0 -and "${{ github.event_name }}" -ne "pull_request") {
-          foreach ($tag in $tags) {
-            $cleanTag = $tag.Trim()
-            if ($cleanTag) {
-              Write-Output "Pushing $cleanTag"
-              docker push $cleanTag
-            }
-          }
-        }
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx (Linux)
+        if: startsWith(matrix.platform, 'linux')
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            network=host
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch,suffix=-${{ matrix.cache-scope }}
+            type=ref,event=pr,suffix=-${{ matrix.cache-scope }}
+            type=semver,pattern={{version}},suffix=-${{ matrix.cache-scope }}
+            type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.cache-scope }}
+            type=semver,pattern={{major}},suffix=-${{ matrix.cache-scope }}
+            type=raw,value=latest-${{ matrix.cache-scope }},enable={{is_default_branch}}
+          flavor: |
+            latest=false
+
+      - name: Build and push Docker image (Linux)
+        if: startsWith(matrix.platform, 'linux')
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ matrix.docker-platform }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=${{ matrix.cache-scope }}
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.cache-scope }}
+          cache-to: |
+            type=gha,mode=max,scope=${{ matrix.cache-scope }}
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.cache-scope }},mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+          target: final
 
   create-manifest:
     if: github.event_name != 'pull_request'
@@ -142,33 +91,32 @@ jobs:
     permissions:
       contents: read
       packages: write
-    
+
     steps:
-    - name: Log in to Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Create and push multi-arch manifest
-      run: |
-        # Extract base tag without platform suffix
-        BASE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-        
-        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-          # Create latest manifest
-          docker manifest create ${BASE_TAG}:latest \
-            ${BASE_TAG}:latest-linux-amd64 \
-            ${BASE_TAG}:latest-linux-arm64
-          docker manifest push ${BASE_TAG}:latest
-        fi
-        
-        # Create branch/tag specific manifests
-        if [[ "${{ github.ref_type }}" == "branch" ]]; then
-          BRANCH_NAME=$(echo ${{ github.ref_name }} | tr '/' '-')
-          docker manifest create ${BASE_TAG}:${BRANCH_NAME} \
-            ${BASE_TAG}:${BRANCH_NAME}-linux-amd64 \
-            ${BASE_TAG}:${BRANCH_NAME}-linux-arm64
-          docker manifest push ${BASE_TAG}:${BRANCH_NAME}
-        fi
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        run: |-
+          # Extract base tag without platform suffix
+          BASE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Create latest manifest
+            docker buildx imagetools create -t ${BASE_TAG}:latest \
+              ${BASE_TAG}:latest-linux-amd64 \
+              ${BASE_TAG}:latest-linux-arm64
+          fi
+
+          # Create branch/tag specific manifests
+          if [[ "${{ github.ref_type }}" == "branch" ]]; then
+            BRANCH_NAME=$(echo ${{ github.ref_name }} | tr '/' '-')
+            docker buildx imagetools create -t ${BASE_TAG}:${BRANCH_NAME} \
+              ${BASE_TAG}:${BRANCH_NAME}-linux-amd64 \
+              ${BASE_TAG}:${BRANCH_NAME}-linux-arm64
+          fi
+
