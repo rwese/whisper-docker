@@ -199,6 +199,7 @@
 <body>
     <div class="container">
         <h1>🎤 Whisper Transcription Service</h1>
+        <p style="text-align: center; color: #666; margin-bottom: 30px; font-style: italic;">Async processing for better performance and reliability</p>
         
         <form id="transcriptionForm">
             <div class="upload-area" id="uploadArea">
@@ -240,17 +241,10 @@
                     </select>
                 </div>
                 
-                <div class="option-group">
-                    <label for="processingMode">Processing Mode:</label>
-                    <select id="processingMode" name="processingMode">
-                        <option value="sync">Synchronous (wait for result)</option>
-                        <option value="async" selected>Asynchronous (background processing)</option>
-                    </select>
-                </div>
             </div>
             
             <button type="submit" class="transcribe-btn" id="transcribeBtn">
-                🚀 Start Transcription
+                🚀 Start Async Transcription
             </button>
         </form>
         
@@ -328,61 +322,15 @@
                 formData.append('language', language);
             }
             
-            const processingMode = document.getElementById('processingMode').value;
-            
             // Show progress
             transcribeBtn.disabled = true;
             progress.style.display = 'block';
             result.innerHTML = '';
             
-            if (processingMode === 'async') {
-                await handleAsyncProcessing(formData);
-            } else {
-                await handleSyncProcessing(formData);
-            }
+            // Always use async processing
+            await handleAsyncProcessing(formData);
         });
 
-        async function handleSyncProcessing(formData) {
-            transcribeBtn.textContent = '⏳ Processing...';
-            progressBar.style.width = '10%';
-            document.getElementById('progressText').textContent = 'Processing your audio file...';
-            
-            try {
-                progressBar.style.width = '50%';
-                document.getElementById('progressText').textContent = 'Transcribing audio...';
-                
-                const response = await fetch('/transcribe', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                progressBar.style.width = '100%';
-                document.getElementById('progressText').textContent = 'Processing complete!';
-                
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Transcription failed');
-                }
-                
-                const contentType = response.headers.get('content-type');
-                
-                if (contentType && contentType.includes('application/json')) {
-                    const data = await response.json();
-                    displayJsonResult(data);
-                } else {
-                    const text = await response.text();
-                    displayTextResult(text, document.getElementById('outputFormat').value);
-                }
-                
-            } catch (error) {
-                displayError(error.message);
-            } finally {
-                transcribeBtn.disabled = false;
-                transcribeBtn.textContent = '🚀 Start Transcription';
-                progress.style.display = 'none';
-                progressBar.style.width = '0%';
-            }
-        }
 
         async function handleAsyncProcessing(formData) {
             transcribeBtn.textContent = '📤 Submitting...';
@@ -419,7 +367,7 @@
             } catch (error) {
                 displayError(error.message);
                 transcribeBtn.disabled = false;
-                transcribeBtn.textContent = '🚀 Start Transcription';
+                transcribeBtn.textContent = '🚀 Start Async Transcription';
                 progress.style.display = 'none';
                 progressBar.style.width = '0%';
             }
@@ -497,7 +445,7 @@
 
         function resetForm() {
             transcribeBtn.disabled = false;
-            transcribeBtn.textContent = '🚀 Start Transcription';
+            transcribeBtn.textContent = '🚀 Start Async Transcription';
             progress.style.display = 'none';
             progressBar.style.width = '0%';
         }

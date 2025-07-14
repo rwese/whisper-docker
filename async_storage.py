@@ -52,7 +52,7 @@ class AsyncStorage:
             dir_path.mkdir(parents=True, exist_ok=True)
         
         # Thread pool for background processing
-        self.executor = ThreadPoolExecutor(max_workers=2)
+        self.executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="async-transcription-")
         self.processing_queue = asyncio.Queue()
         
         # Start background cleanup thread
@@ -61,6 +61,7 @@ class AsyncStorage:
         
         # Cache for transcription services
         self.transcription_services = {}
+        self.transcription_services_lock = threading.Lock()
     
     def _calculate_file_hash(self, content: bytes) -> str:
         """Calculate SHA-256 hash of file content"""
@@ -230,10 +231,11 @@ class AsyncStorage:
             return None
     
     def _get_transcription_service(self, model_name: str) -> TranscriptionService:
-        """Get or create transcription service for model"""
-        if model_name not in self.transcription_services:
-            self.transcription_services[model_name] = TranscriptionService(model_name)
-        return self.transcription_services[model_name]
+        """Get or create transcription service for model (thread-safe)"""
+        with self.transcription_services_lock:
+            if model_name not in self.transcription_services:
+                self.transcription_services[model_name] = TranscriptionService(model_name)
+            return self.transcription_services[model_name]
     
     def _process_task(self, task_id: str):
         """Process a single transcription task"""

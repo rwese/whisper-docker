@@ -1,33 +1,49 @@
+version: '3.8'
+
 services:
   whisper-web:
     build: .
     ports:
-      - "8020:8020"
+      - "8000:8000"
     environment:
       - MODE=web
+      - WORKERS=4  # Enable multithreading with 4 workers
       - HOST=0.0.0.0
-      - PORT=8020
+      - PORT=8000
     volumes:
-      - whisper-cache:/root/.cache/whisper
-    restart: unless-stopped
+      - whisper_cache:/root/.cache/whisper
+      - ./storage:/app/storage  # Persist async task storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8020/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
+    restart: unless-stopped
 
-  whisper-cli:
+  # Optional: Single-threaded mode for comparison
+  whisper-web-single:
     build: .
+    ports:
+      - "8001:8000"
     environment:
-      - MODE=cli
+      - MODE=web
+      - WORKERS=1  # Single-threaded mode
+      - HOST=0.0.0.0
+      - PORT=8000
     volumes:
-      - whisper-cache:/root/.cache/whisper
-      - ./audio:/app/audio:ro  # Mount audio files directory (optional)
-    stdin_open: true
-    tty: true
+      - whisper_cache:/root/.cache/whisper
+      - ./storage:/app/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
     profiles:
-      - cli  # Only start with --profile cli
+      - single  # Only start with --profile single
 
 volumes:
-  whisper-cache:
+  whisper_cache:
     driver: local

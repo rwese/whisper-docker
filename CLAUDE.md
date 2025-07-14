@@ -10,14 +10,13 @@ This is a Docker-based Whisper transcription service that converts audio files t
 
 ### Dual-Mode Design
 - **CLI Mode** (`MODE=cli`): Traditional command-line interface for file-based transcription
-- **Web Mode** (`MODE=web`): FastAPI-based REST API with HTML frontend
+- **Web Mode** (`MODE=web`): FastAPI-based REST API with async-only endpoints and HTML frontend
 
 ### Threading and Concurrency Model
 - **Thread-Safe Model Loading**: Whisper models are loaded lazily with proper locking mechanisms
-- **Sync Endpoint Threading**: `/transcribe` uses ThreadPoolExecutor (4 workers) to avoid blocking the event loop
-- **Async Processing**: `/transcribe/async` uses expanded ThreadPoolExecutor (8 workers) for background processing
+- **Async Processing**: Background processing with expanded ThreadPoolExecutor (8 workers)
 - **Multi-Worker Support**: Configurable uvicorn workers for horizontal scaling within a single process
-- **Request Timeouts**: 5-minute timeout protection for long-running transcriptions
+- **Request Timeouts**: Built-in task timeout protection
 - **Resource Monitoring**: Enhanced health checks with memory, CPU, and threading metrics
 
 ### Logging and Monitoring Architecture
@@ -31,7 +30,7 @@ This is a Docker-based Whisper transcription service that converts audio files t
 ### Key Components
 - **transcription_core.py**: Centralized transcription logic using `faster-whisper`, shared between both modes. Handles automatic language detection from filename patterns (`_en.m4a`, `_de.m4a`) and supports multiple output formats (txt, json, srt, vtt, tsv). Enhanced with comprehensive logging and stdout output
 - **transcribe.py**: CLI entry point with stdin support and argument parsing
-- **web_service.py**: FastAPI web service with endpoints for transcription, health checks, API documentation, and Prometheus metrics. Includes comprehensive logging middleware and request tracing
+- **web_service.py**: FastAPI web service with async endpoints for transcription, health checks, API documentation, and Prometheus metrics. Includes comprehensive logging middleware and request tracing
 - **static/index.html**: Modern HTML5 frontend with drag-and-drop file upload
 - **entrypoint.sh**: Dynamic mode switching between CLI and web service based on environment
 - **generate_client.py**: Auto-generates Python client from OpenAPI schema
@@ -103,7 +102,6 @@ WORKERS=4 python web_service.py
 Open http://localhost:8000 in your browser for the HTML frontend.
 
 #### API Endpoints
-- `POST /transcribe` - Upload and transcribe audio files (with timeout and thread pool)
 - `POST /transcribe/async` - Submit async transcription tasks
 - `GET /tasks/{task_id}` - Check task status
 - `GET /tasks/{task_id}/result` - Get transcription result
@@ -116,20 +114,23 @@ Open http://localhost:8000 in your browser for the HTML frontend.
 
 #### API Usage Examples
 ```bash
-# Transcribe to JSON
-curl -X POST http://localhost:8000/transcribe \
+# Submit async transcription task
+curl -X POST http://localhost:8000/transcribe/async \
   -F "file=@audio.mp3" \
   -F "model=small" \
   -F "output_format=json"
 
-# Transcribe to plain text
-curl -X POST http://localhost:8000/transcribe \
-  -F "file=@audio.wav" \
-  -F "model=base" \
-  -F "output_format=txt"
+# Check task status
+curl http://localhost:8000/tasks/TASK_ID
+
+# Get transcription result
+curl http://localhost:8000/tasks/TASK_ID/result
+
+# Get result in specific format
+curl http://localhost:8000/tasks/TASK_ID/result?format=txt
 
 # Transcribe with language hint
-curl -X POST http://localhost:8000/transcribe \
+curl -X POST http://localhost:8000/transcribe/async \
   -F "file=@audio.m4a" \
   -F "model=small" \
   -F "language=en" \
@@ -207,20 +208,33 @@ from whisper_client import WhisperClient
 # Initialize client
 client = WhisperClient("http://localhost:8000")
 
-# Simple transcription
-text = client.transcribe_to_text("audio.mp3", model="small")
+# Simple async transcription (blocks until complete)
+text = client.transcribe_to_text("audio.mp3", model="small", timeout=60)
 print(text)
 
-# Detailed transcription with segments
-result = client.transcribe_with_segments("audio.wav", model="base")
+# Detailed async transcription with segments
+result = client.transcribe_with_segments("audio.wav", model="base", timeout=60)
 print(f"Language: {result['language']}")
 for segment in result['segments']:
     print(f"[{segment['start']:.1f}s] {segment['text']}")
 
 # SRT subtitles
-srt = client.transcribe_to_srt("video.mp4", model="medium")
+srt = client.transcribe_to_srt("video.mp4", model="medium", timeout=120)
 with open("subtitles.srt", "w") as f:
     f.write(srt)
+
+# Manual async workflow
+task_id = client.submit_async_transcription("audio.mp3", model="small")
+print(f"Task submitted: {task_id}")
+
+# Check status
+status = client.get_task_status(task_id)
+print(f"Status: {status['status']}")
+
+# Get result when ready
+if status['status'] == 'completed':
+    result = client.get_task_result(task_id)
+    print(f"Result: {result['text']}")
 ```
 
 ## Testing
@@ -263,8 +277,8 @@ curl http://localhost:8000/health | jq .
 # Test service statistics
 curl http://localhost:8000/stats | jq .
 
-# Test transcription
-curl -X POST http://localhost:8000/transcribe \
+# Test async transcription
+curl -X POST http://localhost:8000/transcribe/async \
   -F "file=@test.m4a" \
   -F "model=tiny" \
   -F "output_format=json"

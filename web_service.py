@@ -198,8 +198,8 @@ def get_transcription_service(model_name: str) -> TranscriptionService:
             logger.info("Transcription service created", model=model_name, total_services=len(transcription_services))
         return transcription_services[model_name]
 
-# Thread pool for CPU-intensive transcription tasks
-transcription_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="transcription-")
+# Thread pool for formatting tasks only (reduced since no sync transcription)
+transcription_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="formatting-")
 
 # Global stats for monitoring
 app_start_time = time.time()
@@ -359,7 +359,7 @@ async def health_check():
         
         # Get thread information
         active_threads = threading.active_count()
-        thread_pool_active = len([t for t in threading.enumerate() if t.name.startswith("transcription-")])
+        thread_pool_active = len([t for t in threading.enumerate() if t.name.startswith("formatting-")])
         
         # Calculate uptime
         uptime = time.time() - app_start_time
@@ -413,7 +413,7 @@ async def get_stats():
     # Get thread pool stats
     thread_pool_stats = {
         "max_workers": transcription_executor._max_workers,
-        "active_threads": len([t for t in threading.enumerate() if t.name.startswith("transcription-")]),
+        "active_threads": len([t for t in threading.enumerate() if t.name.startswith("formatting-")]),
         "total_threads": threading.active_count()
     }
     
@@ -434,190 +434,6 @@ async def get_stats():
     }
 
 
-@app.post("/transcribe")
-async def transcribe_audio(
-    file: UploadFile = File(...),
-    model: str = Form(default="small"),
-    language: Optional[str] = Form(default=None),
-    output_format: str = Form(default="json"),
-    streaming: bool = Form(default=False)
-):
-    """
-    Transcribe an uploaded audio file
-    
-    Args:
-        file: Audio file to transcribe
-        model: Whisper model to use (tiny, base, small, medium, large)
-        language: Language code (e.g., 'en', 'de') or None for auto-detection
-        output_format: Output format (json, txt, srt, vtt, tsv)
-        streaming: Return segments as they're processed (only for json format)
-    """
-    
-    # Validate model
-    valid_models = ["tiny", "base", "small", "medium", "large"]
-    if model not in valid_models:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid model '{model}'. Must be one of: {', '.join(valid_models)}"
-        )
-    
-    # Validate output format
-    valid_formats = ["json", "txt", "srt", "vtt", "tsv"]
-    if output_format not in valid_formats:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid output format '{output_format}'. Must be one of: {', '.join(valid_formats)}"
-        )
-    
-    # Validate file type
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
-    
-    # Common audio file extensions
-    valid_extensions = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.wma', '.aac', '.mp4', '.mov', '.avi', '.mkv']
-    file_extension = os.path.splitext(file.filename)[1].lower()
-    if file_extension not in valid_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{file_extension}'. Supported types: {', '.join(valid_extensions)}"
-        )
-    
-    # Increment request counter
-    global request_counter
-    with request_counter_lock:
-        request_counter += 1
-        
-    try:
-        # Read file content
-        audio_content = await file.read()
-        
-        # Log file details
-        logger.info(
-            "Processing audio file",
-            filename=file.filename,
-            file_size=len(audio_content),
-            model=model,
-            language=language,
-            output_format=output_format
-        )
-        
-        # Print to stdout for host monitoring
-        print(f"[{datetime.now(timezone.utc).isoformat()}] Starting transcription: {file.filename} ({len(audio_content)} bytes) with model {model}", flush=True)
-        
-        # Update file size metrics
-        safe_metric_update('file_size_histogram', lambda: metrics['file_size_histogram'].observe(len(audio_content)))
-        
-        # Get transcription service
-        service = get_transcription_service(model)
-        
-        # Transcribe audio in thread pool to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
-        transcription_start = time.time()
-        
-        try:
-            logger.info(
-                "Starting transcription",
-                filename=file.filename,
-                model=model,
-                language=language
-            )
-            
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    transcription_executor,
-                    service.transcribe_buffer,
-                    audio_content,
-                    file.filename,
-                    language,
-                    False  # streaming parameter
-                ),
-                timeout=300  # 5 minute timeout
-            )
-            
-            safe_metric_update('transcription_duration', lambda: metrics['transcription_duration'].labels(model=model).observe(time.time() - transcription_start))
-            
-            logger.info(
-                "Transcription completed",
-                filename=file.filename,
-                model=model,
-                language=result.get('language', 'unknown'),
-                duration_seconds=time.time() - transcription_start,
-                text_length=len(result.get('text', '')),
-                segments_count=len(result.get('segments', []))
-            )
-            
-            # Print to stdout for host monitoring
-            print(f"[{datetime.now(timezone.utc).isoformat()}] Transcription completed: {file.filename} in {time.time() - transcription_start:.2f}s ({len(result.get('text', ''))} chars)", flush=True)
-            
-        except asyncio.TimeoutError:
-            logger.error(
-                "Transcription timed out",
-                filename=file.filename,
-                model=model,
-                timeout_seconds=300
-            )
-            print(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Transcription timed out: {file.filename}", file=sys.stderr, flush=True)
-            raise HTTPException(
-                status_code=408,
-                detail="Transcription timed out after 5 minutes"
-            )
-        
-        # Format response based on output_format
-        if output_format == "json":
-            response_data = TranscriptionResponse(
-                text=result["text"],
-                segments=result["segments"],
-                language=result["language"],
-                language_probability=result["language_probability"],
-                model=model,
-                filename=file.filename
-            )
-            return response_data
-        
-        else:
-            # Return formatted text response (run in thread pool)
-            formatted_content = await loop.run_in_executor(
-                transcription_executor,
-                service.export_to_format,
-                result,
-                output_format,
-                os.path.splitext(file.filename)[0]
-            )
-            
-            # Set appropriate content type
-            if output_format == "txt":
-                media_type = "text/plain"
-            elif output_format in ["srt", "vtt"]:
-                media_type = "text/plain"
-            elif output_format == "tsv":
-                media_type = "text/tab-separated-values"
-            else:
-                media_type = "text/plain"
-            
-            return PlainTextResponse(
-                content=formatted_content,
-                media_type=media_type
-            )
-    
-    except FileNotFoundError as e:
-        logger.error(
-            "File not found during transcription",
-            filename=file.filename,
-            error=str(e)
-        )
-        print(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: File not found: {file.filename} - {str(e)}", file=sys.stderr, flush=True)
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(
-            "Transcription failed",
-            filename=file.filename,
-            model=model,
-            error=str(e),
-            error_type=type(e).__name__,
-            exc_info=True
-        )
-        print(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Transcription failed: {file.filename} - {str(e)}", file=sys.stderr, flush=True)
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 
 @app.get("/")
@@ -801,7 +617,6 @@ async def api_info():
         "version": "1.0.0",
         "description": "Upload audio files for transcription using OpenAI Whisper",
         "endpoints": {
-            "POST /transcribe": "Upload and transcribe audio files (synchronous)",
             "POST /transcribe/async": "Submit audio file for async transcription",
             "GET /tasks/{task_id}": "Get task status and metadata",
             "GET /tasks/{task_id}/result": "Get transcription result",

@@ -1,0 +1,23 @@
+services:
+  whisper-web:
+    build: .
+    ports:
+      - "8088:8000"
+    environment:
+      - MODE=web
+      - WORKERS=4
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - whisper_cache:/root/.cache/whisper
+      - ./storage:/app/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  whisper_cache:
