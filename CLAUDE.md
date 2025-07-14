@@ -38,7 +38,7 @@ This is a Docker-based Whisper transcription service that converts audio files t
 
 ### Language Detection Strategy
 1. Filename patterns (`_en`, `_de`, etc.)
-2. Manual override via `--language` parameter  
+2. Manual override via `--language` parameter
 3. Default fallback to German and English auto-detection
 
 ### Containerization
@@ -322,7 +322,7 @@ curl -X POST http://localhost:8000/transcribe/async \
 # Start web service
 docker-compose up whisper-web
 
-# Run CLI transcription  
+# Run CLI transcription
 ./transcribe audio.m4a
 
 # Run API tests (requires running web service)
@@ -334,7 +334,7 @@ python generate_client.py --url http://localhost:8000
 ```
 
 ### CI/CD Pipeline
-- **GitHub Actions** workflow at `.github/workflows/docker-build.yml` 
+- **GitHub Actions** workflow at `.github/workflows/docker-build.yml`
 - **Multi-architecture builds** for linux/amd64 and linux/arm64
 - **Container Registry** pushes to GitHub Container Registry (ghcr.io)
 - **Triggers**: Push to main, tags, and pull requests

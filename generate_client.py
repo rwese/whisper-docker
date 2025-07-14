@@ -3,11 +3,12 @@
 Generate Python client for Whisper API from OpenAPI schema
 """
 
-import requests
 import json
 import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
+import requests
 
 
 def fetch_openapi_schema(base_url: str = "http://localhost:8000") -> Dict[str, Any]:
@@ -22,9 +23,11 @@ def fetch_openapi_schema(base_url: str = "http://localhost:8000") -> Dict[str, A
         raise
 
 
-def generate_python_client(schema: Dict[str, Any], output_file: str = "whisper_client.py") -> None:
+def generate_python_client(
+    schema: Dict[str, Any], output_file: str = "whisper_client.py"
+) -> None:
     """Generate a Python client from OpenAPI schema"""
-    
+
     client_code = '''"""
 Auto-generated Python client for Whisper Transcription API
 Generated from OpenAPI schema
@@ -43,17 +46,17 @@ class WhisperAPIError(Exception):
 
 class WhisperClient:
     """Python client for Whisper Transcription API"""
-    
+
     def __init__(self, base_url: str = "http://localhost:8000"):
         """
         Initialize Whisper API client
-        
+
         Args:
             base_url: Base URL of the Whisper API service
         """
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
-    
+
     def _make_request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Make HTTP request with error handling"""
         url = f"{self.base_url}{endpoint}"
@@ -68,37 +71,37 @@ class WhisperClient:
             return response
         except requests.RequestException as e:
             raise WhisperAPIError(f"Network error: {e}")
-    
+
     def health_check(self) -> Dict[str, Any]:
         """
         Check API health status
-        
+
         Returns:
             Dict containing health status information
         """
         response = self._make_request('GET', '/health')
         return response.json()
-    
+
     def list_models(self) -> Dict[str, Any]:
         """
         List available Whisper models
-        
+
         Returns:
             Dict containing list of available models with descriptions
         """
         response = self._make_request('GET', '/models')
         return response.json()
-    
+
     def get_api_info(self) -> Dict[str, Any]:
         """
         Get API information
-        
+
         Returns:
             Dict containing API name, version, and endpoints
         """
         response = self._make_request('GET', '/api')
         return response.json()
-    
+
     def transcribe(
         self,
         audio_file: Union[str, Path, BinaryIO],
@@ -109,17 +112,17 @@ class WhisperClient:
     ) -> Union[Dict[str, Any], str]:
         """
         Transcribe an audio file
-        
+
         Args:
             audio_file: Path to audio file or file-like object
             model: Whisper model to use (tiny, base, small, medium, large)
             language: Language code (e.g., 'en', 'de') or None for auto-detection
             output_format: Output format (json, txt, srt, vtt, tsv)
             streaming: Return segments as they're processed (only for json format)
-        
+
         Returns:
             Transcription result as dict (if json format) or string (other formats)
-        
+
         Raises:
             WhisperAPIError: If transcription fails
             FileNotFoundError: If audio file doesn't exist
@@ -129,7 +132,7 @@ class WhisperClient:
             audio_file = Path(audio_file)
             if not audio_file.exists():
                 raise FileNotFoundError(f"Audio file not found: {audio_file}")
-            
+
             with open(audio_file, 'rb') as f:
                 files = {'file': (audio_file.name, f, self._get_mime_type(audio_file))}
                 return self._do_transcribe(files, model, language, output_format, streaming)
@@ -138,7 +141,7 @@ class WhisperClient:
             filename = getattr(audio_file, 'name', 'audio_file')
             files = {'file': (filename, audio_file, 'audio/wav')}
             return self._do_transcribe(files, model, language, output_format, streaming)
-    
+
     def _do_transcribe(self, files, model, language, output_format, streaming):
         """Internal method to perform transcription"""
         data = {
@@ -146,19 +149,19 @@ class WhisperClient:
             'output_format': output_format,
             'streaming': streaming
         }
-        
+
         if language:
             data['language'] = language
-        
+
         response = self._make_request('POST', '/transcribe', files=files, data=data)
-        
+
         # Return appropriate format based on content type
         content_type = response.headers.get('content-type', '')
         if 'application/json' in content_type:
             return response.json()
         else:
             return response.text
-    
+
     def _get_mime_type(self, file_path: Path) -> str:
         """Get MIME type for audio file"""
         extension = file_path.suffix.lower()
@@ -176,7 +179,7 @@ class WhisperClient:
             '.mkv': 'video/x-matroska'
         }
         return mime_types.get(extension, 'application/octet-stream')
-    
+
     def transcribe_file(
         self,
         file_path: Union[str, Path],
@@ -184,16 +187,16 @@ class WhisperClient:
     ) -> Union[Dict[str, Any], str]:
         """
         Convenience method to transcribe a file by path
-        
+
         Args:
             file_path: Path to the audio file
             **kwargs: Additional arguments for transcribe()
-        
+
         Returns:
             Transcription result
         """
         return self.transcribe(file_path, **kwargs)
-    
+
     def transcribe_to_text(
         self,
         audio_file: Union[str, Path, BinaryIO],
@@ -202,18 +205,18 @@ class WhisperClient:
     ) -> str:
         """
         Convenience method to transcribe and return plain text
-        
+
         Args:
             audio_file: Path to audio file or file-like object
             model: Whisper model to use
             language: Language code or None for auto-detection
-        
+
         Returns:
             Transcribed text as string
         """
         result = self.transcribe(audio_file, model=model, language=language, output_format="txt")
         return result if isinstance(result, str) else result.get('text', '')
-    
+
     def transcribe_to_srt(
         self,
         audio_file: Union[str, Path, BinaryIO],
@@ -222,17 +225,17 @@ class WhisperClient:
     ) -> str:
         """
         Convenience method to transcribe and return SRT subtitles
-        
+
         Args:
             audio_file: Path to audio file or file-like object
             model: Whisper model to use
             language: Language code or None for auto-detection
-        
+
         Returns:
             SRT formatted subtitles as string
         """
         return self.transcribe(audio_file, model=model, language=language, output_format="srt")
-    
+
     def transcribe_with_segments(
         self,
         audio_file: Union[str, Path, BinaryIO],
@@ -241,12 +244,12 @@ class WhisperClient:
     ) -> Dict[str, Any]:
         """
         Convenience method to transcribe and return detailed results with segments
-        
+
         Args:
             audio_file: Path to audio file or file-like object
             model: Whisper model to use
             language: Language code or None for auto-detection
-        
+
         Returns:
             Detailed transcription result with segments
         """
@@ -260,68 +263,75 @@ class WhisperClient:
 if __name__ == "__main__":
     # Initialize client
     client = WhisperClient("http://localhost:8000")
-    
+
     # Test connection
     try:
         health = client.health_check()
         print(f"API Status: {health['status']}")
-        
+
         models = client.list_models()
         print(f"Available models: {[m['name'] for m in models['models']]}")
-        
+
         # Example transcription (uncomment to test with actual file)
         # result = client.transcribe_to_text("audio.mp3", model="small")
         # print(f"Transcription: {result}")
-        
+
     except WhisperAPIError as e:
         print(f"API Error: {e}")
     except Exception as e:
         print(f"Error: {e}")
 '''
-    
+
     # Write the generated client to file
-    with open(output_file, 'w') as f:
+    with open(output_file, "w") as f:
         f.write(client_code)
-    
+
     print(f"✅ Generated Python client: {output_file}")
 
 
-def generate_client_from_url(api_url: str = "http://localhost:8000", output_file: str = "whisper_client.py"):
+def generate_client_from_url(
+    api_url: str = "http://localhost:8000", output_file: str = "whisper_client.py"
+):
     """Generate client from a running API"""
     print(f"🔍 Fetching OpenAPI schema from {api_url}")
     schema = fetch_openapi_schema(api_url)
-    
+
     print(f"📋 API Info:")
     print(f"  Title: {schema.get('info', {}).get('title', 'Unknown')}")
     print(f"  Version: {schema.get('info', {}).get('version', 'Unknown')}")
-    print(f"  Description: {schema.get('info', {}).get('description', 'No description')}")
-    
+    print(
+        f"  Description: {schema.get('info', {}).get('description', 'No description')}"
+    )
+
     print(f"🛠️  Generating Python client...")
     generate_python_client(schema, output_file)
-    
+
     return output_file
 
 
 if __name__ == "__main__":
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Generate Python client for Whisper API")
+
+    parser = argparse.ArgumentParser(
+        description="Generate Python client for Whisper API"
+    )
     parser.add_argument(
-        "--url", 
+        "--url",
         default="http://localhost:8000",
-        help="Base URL of the Whisper API (default: http://localhost:8000)"
+        help="Base URL of the Whisper API (default: http://localhost:8000)",
     )
     parser.add_argument(
-        "--output", 
+        "--output",
         default="whisper_client.py",
-        help="Output file for generated client (default: whisper_client.py)"
+        help="Output file for generated client (default: whisper_client.py)",
     )
-    
+
     args = parser.parse_args()
-    
+
     try:
         client_file = generate_client_from_url(args.url, args.output)
-        print(f"""
+        print(
+            f"""
 🎉 Client generation complete!
 
 Usage example:
@@ -335,7 +345,8 @@ print(result)
 
 To test the generated client:
 python {client_file}
-""")
+"""
+        )
     except Exception as e:
         print(f"❌ Error generating client: {e}")
         exit(1)

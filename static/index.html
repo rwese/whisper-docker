@@ -200,7 +200,7 @@
     <div class="container">
         <h1>🎤 Whisper Transcription Service</h1>
         <p style="text-align: center; color: #666; margin-bottom: 30px; font-style: italic;">Async processing for better performance and reliability</p>
-        
+
         <form id="transcriptionForm">
             <div class="upload-area" id="uploadArea">
                 <p>📁 Drag and drop an audio file here or click to select</p>
@@ -212,7 +212,7 @@
                     Supported formats: MP3, WAV, M4A, FLAC, OGG, WMA, AAC, MP4, MOV, AVI, MKV
                 </p>
             </div>
-            
+
             <div class="options">
                 <div class="option-group">
                     <label for="model">Whisper Model:</label>
@@ -224,12 +224,12 @@
                         <option value="large">Large (~2.9 GB) - Highest accuracy</option>
                     </select>
                 </div>
-                
+
                 <div class="option-group">
                     <label for="language">Language (optional):</label>
                     <input type="text" id="language" name="language" placeholder="e.g., en, de, fr (auto-detect if empty)">
                 </div>
-                
+
                 <div class="option-group">
                     <label for="outputFormat">Output Format:</label>
                     <select id="outputFormat" name="outputFormat">
@@ -240,21 +240,21 @@
                         <option value="tsv">TSV (Tab-separated)</option>
                     </select>
                 </div>
-                
+
             </div>
-            
+
             <button type="submit" class="transcribe-btn" id="transcribeBtn">
                 🚀 Start Async Transcription
             </button>
         </form>
-        
+
         <div class="progress" id="progress">
             <div class="progress-bar" id="progressBar"></div>
             <p style="text-align: center; margin-top: 10px;" id="progressText">Processing your audio file...</p>
         </div>
-        
+
         <div id="result"></div>
-        
+
         <div id="taskHistory" style="display: none;">
             <h3>Recent Tasks</h3>
             <div id="taskList"></div>
@@ -304,29 +304,29 @@
         // Form submission
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const formData = new FormData();
             const file = fileInput.files[0];
-            
+
             if (!file) {
                 alert('Please select an audio file');
                 return;
             }
-            
+
             formData.append('file', file);
             formData.append('model', document.getElementById('model').value);
             formData.append('output_format', document.getElementById('outputFormat').value);
-            
+
             const language = document.getElementById('language').value;
             if (language) {
                 formData.append('language', language);
             }
-            
+
             // Show progress
             transcribeBtn.disabled = true;
             progress.style.display = 'block';
             result.innerHTML = '';
-            
+
             // Always use async processing
             await handleAsyncProcessing(formData);
         });
@@ -336,34 +336,34 @@
             transcribeBtn.textContent = '📤 Submitting...';
             progressBar.style.width = '10%';
             document.getElementById('progressText').textContent = 'Submitting transcription task...';
-            
+
             try {
                 // Submit async task
                 const response = await fetch('/transcribe/async', {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 if (!response.ok) {
                     const error = await response.json();
                     throw new Error(error.detail || 'Failed to submit task');
                 }
-                
+
                 const taskInfo = await response.json();
                 progressBar.style.width = '25%';
-                
+
                 if (taskInfo.duplicate) {
                     displayAsyncResult(`✨ Found existing task for this file`, taskInfo);
                 } else {
                     displayAsyncResult(`📋 Task submitted successfully`, taskInfo);
                 }
-                
+
                 // Save task to history
                 saveTaskToHistory(taskInfo);
-                
+
                 // Start polling for result
                 pollTaskStatus(taskInfo.task_id);
-                
+
             } catch (error) {
                 displayError(error.message);
                 transcribeBtn.disabled = false;
@@ -380,10 +380,10 @@
                     if (!response.ok) {
                         throw new Error('Failed to get task status');
                     }
-                    
+
                     const status = await response.json();
                     updateTaskStatus(status);
-                    
+
                     if (status.status === 'completed') {
                         clearInterval(pollInterval);
                         updateTaskInHistory(taskId, 'completed');
@@ -396,7 +396,7 @@
                     } else {
                         updateTaskInHistory(taskId, status.status);
                     }
-                    
+
                 } catch (error) {
                     clearInterval(pollInterval);
                     displayError(`Polling failed: ${error.message}`);
@@ -412,7 +412,7 @@
                 'completed': { text: '✅ Processing complete!', progress: 100, progressText: 'Transcription completed successfully!' },
                 'failed': { text: '❌ Processing failed', progress: 100, progressText: 'Task failed to process' }
             };
-            
+
             const statusInfo = statusMap[status.status] || { text: status.status, progress: 60, progressText: 'Processing...' };
             transcribeBtn.textContent = statusInfo.text;
             progressBar.style.width = statusInfo.progress + '%';
@@ -425,9 +425,9 @@
                 if (!response.ok) {
                     throw new Error('Failed to fetch result');
                 }
-                
+
                 const contentType = response.headers.get('content-type');
-                
+
                 if (contentType && contentType.includes('application/json')) {
                     const data = await response.json();
                     displayAsyncJsonResult(data);
@@ -435,7 +435,7 @@
                     const text = await response.text();
                     displayTextResult(text, document.getElementById('outputFormat').value);
                 }
-                
+
             } catch (error) {
                 displayError(`Failed to fetch result: ${error.message}`);
             } finally {
@@ -456,12 +456,12 @@
                     <h3>✅ Transcription Complete</h3>
                     <p><strong>Language:</strong> ${data.language} (${(data.language_probability * 100).toFixed(1)}% confidence)</p>
                     <p><strong>Model:</strong> ${data.model}</p>
-                    
+
                     <h4>Transcript:</h4>
                     <div style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd; margin: 10px 0;">
                         ${data.text}
                     </div>
-                    
+
                     <div class="download-links">
                         <button onclick="downloadText('${data.filename}_transcript.txt', \`${data.text}\`)" class="download-link">
                             📄 Download TXT
@@ -470,7 +470,7 @@
                             📋 Download JSON
                         </button>
                     </div>
-                    
+
                     ${data.segments && data.segments.length > 0 ? `
                         <h4>Segments (${data.segments.length}):</h4>
                         <div class="segments">
@@ -493,16 +493,16 @@
                 'vtt': 'WebVTT Subtitles',
                 'tsv': 'TSV Data'
             };
-            
+
             result.innerHTML = `
                 <div class="result">
                     <h3>✅ Transcription Complete</h3>
                     <p><strong>Format:</strong> ${formatNames[format] || format.toUpperCase()}</p>
-                    
+
                     <div style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd; margin: 10px 0; white-space: pre-wrap; font-family: monospace; max-height: 400px; overflow-y: auto;">
                         ${text}
                     </div>
-                    
+
                     <div class="download-links">
                         <button onclick="downloadText('transcript.${format}', \`${text.replace(/`/g, '\\`')}\`)" class="download-link">
                             📄 Download ${format.toUpperCase()}
@@ -525,7 +525,7 @@
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
             const secs = Math.floor(seconds % 60);
-            
+
             if (hours > 0) {
                 return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
             }
@@ -568,12 +568,12 @@
                     <p><strong>Processing Time:</strong> ${taskMeta.processing_duration_seconds?.toFixed(1)}s</p>
                     <p><strong>Characters:</strong> ${data.character_count}</p>
                     <p><strong>TTL Expires:</strong> ${new Date(taskMeta.ttl_expires_at).toLocaleString()}</p>
-                    
+
                     <h4>Transcript:</h4>
                     <div style="background: white; padding: 15px; border-radius: 4px; border: 1px solid #ddd; margin: 10px 0;">
                         ${data.text}
                     </div>
-                    
+
                     <div class="download-links">
                         <button onclick="downloadText('${taskMeta.filename}_transcript.txt', \`${data.text}\`)}" class="download-link">
                             📄 Download TXT
@@ -582,7 +582,7 @@
                             📋 Download JSON
                         </button>
                     </div>
-                    
+
                     ${data.segments && data.segments.length > 0 ? `
                         <h4>Segments (${data.segments.length}):</h4>
                         <div class="segments">
@@ -609,10 +609,10 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
-        
+
         // Task history management
         let taskHistory = JSON.parse(localStorage.getItem('whisper-tasks') || '[]');
-        
+
         function saveTaskToHistory(taskInfo) {
             const task = {
                 id: taskInfo.task_id,
@@ -620,20 +620,20 @@
                 created_at: taskInfo.created_at,
                 status: 'pending'
             };
-            
+
             // Remove existing task with same ID
             taskHistory = taskHistory.filter(t => t.id !== task.id);
-            
+
             // Add new task to beginning
             taskHistory.unshift(task);
-            
+
             // Keep only last 10 tasks
             taskHistory = taskHistory.slice(0, 10);
-            
+
             localStorage.setItem('whisper-tasks', JSON.stringify(taskHistory));
             updateTaskHistoryDisplay();
         }
-        
+
         function updateTaskInHistory(taskId, status) {
             const task = taskHistory.find(t => t.id === taskId);
             if (task) {
@@ -642,18 +642,18 @@
                 updateTaskHistoryDisplay();
             }
         }
-        
+
         function updateTaskHistoryDisplay() {
             const taskList = document.getElementById('taskList');
             const taskHistoryDiv = document.getElementById('taskHistory');
-            
+
             if (taskHistory.length === 0) {
                 taskHistoryDiv.style.display = 'none';
                 return;
             }
-            
+
             taskHistoryDiv.style.display = 'block';
-            
+
             taskList.innerHTML = taskHistory.map(task => {
                 const statusEmoji = {
                     'pending': '⏳',
@@ -661,7 +661,7 @@
                     'completed': '✅',
                     'failed': '❌'
                 };
-                
+
                 return `
                     <div class="task-item">
                         <div class="task-header">
@@ -680,16 +680,16 @@
                 `;
             }).join('');
         }
-        
+
         async function loadTaskResult(taskId) {
             try {
                 const response = await fetch(`/tasks/${taskId}/result`);
                 if (!response.ok) {
                     throw new Error('Failed to load result');
                 }
-                
+
                 const contentType = response.headers.get('content-type');
-                
+
                 if (contentType && contentType.includes('application/json')) {
                     const data = await response.json();
                     displayAsyncJsonResult(data);
@@ -697,12 +697,12 @@
                     const text = await response.text();
                     displayTextResult(text, 'txt');
                 }
-                
+
             } catch (error) {
                 displayError(`Failed to load result: ${error.message}`);
             }
         }
-        
+
         // Load task history on page load
         window.addEventListener('load', () => {
             updateTaskHistoryDisplay();

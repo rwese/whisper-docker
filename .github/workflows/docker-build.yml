@@ -123,4 +123,3 @@ jobs:
               "${tag}-linux-amd64" \
               "${tag}-linux-arm64"
           done
-

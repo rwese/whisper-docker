@@ -49,7 +49,7 @@ The tool automatically detects language from filename patterns:
 # Auto-detects English
 cat presentation_en.m4a | docker run --rm -i ghcr.io/rwese/whisper-docker:latest
 
-# Auto-detects German  
+# Auto-detects German
 cat meeting_de.wav | docker run --rm -i ghcr.io/rwese/whisper-docker:latest
 
 # Force specific language

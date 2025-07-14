@@ -30,22 +30,22 @@ start_time=$(date +%s)
 make_request() {
     local request_id=$1
     local start=$(date +%s%3N)
-    
+
     response=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/transcribe" \
         -F "file=@$TEST_FILE" \
         -F "model=tiny" \
         -F "output_format=json")
-    
+
     local end=$(date +%s%3N)
     local duration=$((end - start))
     local http_code=$(echo "$response" | tail -n1)
     local body=$(echo "$response" | head -n -1)
-    
+
     if [ "$http_code" = "200" ]; then
         local text_length=$(echo "$body" | jq -r '.text' | wc -c)
         local segments=$(echo "$body" | jq '.segments | length')
         local language=$(echo "$body" | jq -r '.language')
-        
+
         echo "Request $request_id: SUCCESS in ${duration}ms - $text_length chars, $segments segments, language: $language"
     else
         echo "Request $request_id: FAILED (HTTP $http_code) in ${duration}ms"
@@ -77,15 +77,15 @@ async_response=$(curl -s -X POST "$BASE_URL/transcribe/async" \
 if [ $? -eq 0 ]; then
     task_id=$(echo "$async_response" | jq -r '.task_id')
     echo "Async task submitted: $task_id"
-    
+
     # Poll for completion
     for i in {1..30}; do
         sleep 1
         status_response=$(curl -s "$BASE_URL/tasks/$task_id")
         status=$(echo "$status_response" | jq -r '.status')
-        
+
         echo "Status check $i: $status"
-        
+
         if [ "$status" = "completed" ]; then
             result_response=$(curl -s "$BASE_URL/tasks/$task_id/result")
             text_length=$(echo "$result_response" | jq -r '.text' | wc -c)

@@ -1,5 +1,5 @@
 # Storage directory for async transcription tasks
-# 
+#
 # Structure:
 # - tasks/: Task metadata (JSON files)
 # - files/: Uploaded audio files (hash-named)

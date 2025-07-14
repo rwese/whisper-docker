@@ -206,15 +206,15 @@ import aiofiles
 
 async def transcribe_audio(audio_file_path: str, config: dict) -> dict:
     timeout = aiohttp.ClientTimeout(total=config.get('timeout', 300))
-    
+
     async with aiohttp.ClientSession(timeout=timeout) as session:
         data = aiohttp.FormData()
-        
+
         # Add audio file
         async with aiofiles.open(audio_file_path, 'rb') as f:
             audio_data = await f.read()
             data.add_field('audio', audio_data, filename='audio.m4a')
-        
+
         # Add optional parameters
         if config.get('model'):
             data.add_field('model', config['model'])
@@ -222,12 +222,12 @@ async def transcribe_audio(audio_file_path: str, config: dict) -> dict:
             data.add_field('language', config['language'])
         if config.get('prompt'):
             data.add_field('prompt', config['prompt'])
-        
+
         # Set headers
         headers = {}
         if config.get('api_key'):
             headers['Authorization'] = f"Bearer {config['api_key']}"
-        
+
         # Make request
         async with session.post(config['api_url'], data=data, headers=headers) as response:
             if response.status == 200:
