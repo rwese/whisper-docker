@@ -11,11 +11,21 @@ import threading
 import logging
 from pathlib import Path
 from faster_whisper import WhisperModel
-import structlog
 from datetime import datetime, timezone
 
-# Set up logging
-logger = structlog.get_logger()
+# Set up logging with optional structlog support
+try:
+    import structlog
+    logger = structlog.get_logger()
+    STRUCTLOG_AVAILABLE = True
+except ImportError:
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        stream=sys.stdout,
+        level=logging.INFO
+    )
+    logger = logging.getLogger(__name__)
+    STRUCTLOG_AVAILABLE = False
 
 
 class TranscriptionService:
@@ -32,10 +42,16 @@ class TranscriptionService:
             with self._model_lock:
                 # Double-check pattern to avoid race conditions
                 if self.model is None:
-                    logger.info("Loading Whisper model", model=self.model_name)
+                    if STRUCTLOG_AVAILABLE:
+                        logger.info("Loading Whisper model", model=self.model_name)
+                    else:
+                        logger.info(f"Loading Whisper model: {self.model_name}")
                     print(f"[{datetime.now(timezone.utc).isoformat()}] Loading Whisper model: {self.model_name}", flush=True)
                     self.model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
-                    logger.info("Whisper model loaded successfully", model=self.model_name)
+                    if STRUCTLOG_AVAILABLE:
+                        logger.info("Whisper model loaded successfully", model=self.model_name)
+                    else:
+                        logger.info(f"Whisper model loaded successfully: {self.model_name}")
                     print(f"[{datetime.now(timezone.utc).isoformat()}] Whisper model loaded: {self.model_name}", flush=True)
         return self.model
     

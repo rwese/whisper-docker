@@ -18,87 +18,139 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 from concurrent.futures import ThreadPoolExecutor
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-import structlog
+try:
+    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry, REGISTRY
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    Counter = Histogram = Gauge = None
+    CONTENT_TYPE_LATEST = "text/plain"
+    def generate_latest():
+        return "# Prometheus client not available\n"
+
+try:
+    import structlog
+    STRUCTLOG_AVAILABLE = True
+except ImportError:
+    STRUCTLOG_AVAILABLE = False
+    structlog = None
+
 from datetime import datetime, timezone
 
 from transcription_core import TranscriptionService
 from async_storage import storage
 
 # Configure structured logging
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer()
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
-)
+if STRUCTLOG_AVAILABLE:
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.UnicodeDecoder(),
+            structlog.processors.JSONRenderer()
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+    logger = structlog.get_logger()
+else:
+    # Fallback to basic logging
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        stream=sys.stdout,
+        level=logging.INFO
+    )
+    logger = logging.getLogger(__name__)
 
-# Set up logging
-logging.basicConfig(
-    format="%(message)s",
-    stream=sys.stdout,
-    level=logging.INFO
-)
+# Prometheus metrics - use a function to initialize metrics safely
+def get_or_create_metrics():
+    """Get or create Prometheus metrics, handling registry conflicts"""
+    if not PROMETHEUS_AVAILABLE:
+        return None
+    
+    # Create new metrics with error handling
+    try:
+        # Clear any existing metrics first
+        REGISTRY._collector_to_names.clear()
+        REGISTRY._names_to_collectors.clear()
+        
+        metrics = {
+            'request_count': Counter(
+                'whisper_requests_total',
+                'Total number of requests',
+                ['method', 'endpoint', 'status_code']
+            ),
+            'request_duration': Histogram(
+                'whisper_request_duration_seconds',
+                'Request duration in seconds',
+                ['method', 'endpoint']
+            ),
+            'transcription_duration': Histogram(
+                'whisper_transcription_duration_seconds',
+                'Transcription duration in seconds',
+                ['model']
+            ),
+            'file_size_histogram': Histogram(
+                'whisper_file_size_bytes',
+                'Size of uploaded files in bytes'
+            ),
+            'active_requests': Gauge(
+                'whisper_active_requests',
+                'Number of active requests'
+            ),
+            'loaded_models': Gauge(
+                'whisper_loaded_models',
+                'Number of loaded models'
+            ),
+            'thread_pool_active': Gauge(
+                'whisper_thread_pool_active',
+                'Number of active threads in thread pool'
+            ),
+            'task_queue_size': Gauge(
+                'whisper_task_queue_size',
+                'Size of async task queue'
+            ),
+            'model_load_duration': Histogram(
+                'whisper_model_load_duration_seconds',
+                'Model loading duration in seconds',
+                ['model']
+            ),
+            'error_count': Counter(
+                'whisper_errors_total',
+                'Total number of errors',
+                ['error_type', 'endpoint']
+            )
+        }
+        return metrics
+    except (ValueError, AttributeError) as e:
+        # If metrics already exist or there's an error, return None to indicate we should skip metrics
+        if STRUCTLOG_AVAILABLE:
+            logger.warning("Metrics already registered or error occurred, disabling Prometheus metrics", error=str(e))
+        else:
+            logger.warning(f"Metrics already registered or error occurred, disabling Prometheus metrics: {e}")
+        return None
 
-logger = structlog.get_logger()
+# Initialize metrics
+metrics = get_or_create_metrics()
 
-# Prometheus metrics
-request_count = Counter(
-    'whisper_requests_total',
-    'Total number of requests',
-    ['method', 'endpoint', 'status_code']
-)
-request_duration = Histogram(
-    'whisper_request_duration_seconds',
-    'Request duration in seconds',
-    ['method', 'endpoint']
-)
-transcription_duration = Histogram(
-    'whisper_transcription_duration_seconds',
-    'Transcription duration in seconds',
-    ['model']
-)
-file_size_histogram = Histogram(
-    'whisper_file_size_bytes',
-    'Size of uploaded files in bytes'
-)
-active_requests = Gauge(
-    'whisper_active_requests',
-    'Number of active requests'
-)
-loaded_models = Gauge(
-    'whisper_loaded_models',
-    'Number of loaded models'
-)
-thread_pool_active = Gauge(
-    'whisper_thread_pool_active',
-    'Number of active threads in thread pool'
-)
-task_queue_size = Gauge(
-    'whisper_task_queue_size',
-    'Size of async task queue'
-)
-model_load_duration = Histogram(
-    'whisper_model_load_duration_seconds',
-    'Model loading duration in seconds',
-    ['model']
-)
-error_count = Counter(
-    'whisper_errors_total',
-    'Total number of errors',
-    ['error_type', 'endpoint']
-)
+# Helper function to safely update metrics
+def safe_metric_update(metric_name, operation, *args, **kwargs):
+    """Safely update a metric, handling cases where metrics are disabled"""
+    if metrics and metrics.get(metric_name):
+        try:
+            operation(*args, **kwargs)
+        except Exception as e:
+            if STRUCTLOG_AVAILABLE:
+                logger.warning(f"Failed to update metric {metric_name}", error=str(e))
+            else:
+                logger.warning(f"Failed to update metric {metric_name}: {e}")
 
 
 @asynccontextmanager
@@ -141,8 +193,8 @@ def get_transcription_service(model_name: str) -> TranscriptionService:
             logger.info("Creating new transcription service", model=model_name)
             start_time = time.time()
             transcription_services[model_name] = TranscriptionService(model_name)
-            model_load_duration.labels(model=model_name).observe(time.time() - start_time)
-            loaded_models.set(len(transcription_services))
+            safe_metric_update('model_load_duration', lambda: metrics['model_load_duration'].labels(model=model_name).observe(time.time() - start_time))
+            safe_metric_update('loaded_models', lambda: metrics['loaded_models'].set(len(transcription_services)))
             logger.info("Transcription service created", model=model_name, total_services=len(transcription_services))
         return transcription_services[model_name]
 
@@ -169,7 +221,7 @@ async def logging_middleware(request: Request, call_next):
     )
     
     # Update active requests gauge
-    active_requests.inc()
+    safe_metric_update('active_requests', lambda: metrics['active_requests'].inc())
     
     try:
         response = await call_next(request)
@@ -179,16 +231,16 @@ async def logging_middleware(request: Request, call_next):
         
         # Update metrics
         endpoint = request.url.path
-        request_count.labels(
+        safe_metric_update('request_count', lambda: metrics['request_count'].labels(
             method=request.method,
             endpoint=endpoint,
             status_code=response.status_code
-        ).inc()
+        ).inc())
         
-        request_duration.labels(
+        safe_metric_update('request_duration', lambda: metrics['request_duration'].labels(
             method=request.method,
             endpoint=endpoint
-        ).observe(duration)
+        ).observe(duration))
         
         # Log request completion
         logger.info(
@@ -208,16 +260,16 @@ async def logging_middleware(request: Request, call_next):
         
         # Update error metrics
         endpoint = request.url.path
-        error_count.labels(
+        safe_metric_update('error_count', lambda: metrics['error_count'].labels(
             error_type=type(e).__name__,
             endpoint=endpoint
-        ).inc()
+        ).inc())
         
-        request_count.labels(
+        safe_metric_update('request_count', lambda: metrics['request_count'].labels(
             method=request.method,
             endpoint=endpoint,
             status_code=500
-        ).inc()
+        ).inc())
         
         # Log error
         logger.error(
@@ -235,13 +287,17 @@ async def logging_middleware(request: Request, call_next):
     
     finally:
         # Update active requests gauge
-        active_requests.dec()
+        safe_metric_update('active_requests', lambda: metrics['active_requests'].dec())
 
 # Prometheus metrics endpoint
 @app.get("/metrics")
-async def metrics():
+async def metrics_endpoint():
     """Prometheus metrics endpoint"""
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    try:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    except Exception as e:
+        logger.error("Failed to generate metrics", error=str(e))
+        return Response("# Metrics temporarily unavailable\n", media_type=CONTENT_TYPE_LATEST)
 
 
 class TranscriptionResponse(BaseModel):
@@ -362,9 +418,9 @@ async def get_stats():
     }
     
     # Update Prometheus gauges
-    loaded_models.set(len(loaded_model_stats))
-    thread_pool_active.set(thread_pool_stats["active_threads"])
-    task_queue_size.set(storage.processing_queue.qsize())
+    safe_metric_update('loaded_models', lambda: metrics['loaded_models'].set(len(loaded_model_stats)))
+    safe_metric_update('thread_pool_active', lambda: metrics['thread_pool_active'].set(thread_pool_stats["active_threads"]))
+    safe_metric_update('task_queue_size', lambda: metrics['task_queue_size'].set(storage.processing_queue.qsize()))
     
     return {
         "uptime_seconds": time.time() - app_start_time,
@@ -449,7 +505,7 @@ async def transcribe_audio(
         print(f"[{datetime.now(timezone.utc).isoformat()}] Starting transcription: {file.filename} ({len(audio_content)} bytes) with model {model}", flush=True)
         
         # Update file size metrics
-        file_size_histogram.observe(len(audio_content))
+        safe_metric_update('file_size_histogram', lambda: metrics['file_size_histogram'].observe(len(audio_content)))
         
         # Get transcription service
         service = get_transcription_service(model)
@@ -478,7 +534,7 @@ async def transcribe_audio(
                 timeout=300  # 5 minute timeout
             )
             
-            transcription_duration.labels(model=model).observe(time.time() - transcription_start)
+            safe_metric_update('transcription_duration', lambda: metrics['transcription_duration'].labels(model=model).observe(time.time() - transcription_start))
             
             logger.info(
                 "Transcription completed",
@@ -640,7 +696,7 @@ async def submit_async_transcription(
         )
         
         # Update task queue metrics
-        task_queue_size.set(storage.processing_queue.qsize())
+        safe_metric_update('task_queue_size', lambda: metrics['task_queue_size'].set(storage.processing_queue.qsize()))
         
         logger.info(
             "Async transcription task created",
