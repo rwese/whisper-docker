@@ -5,16 +5,20 @@ FROM python:3.11-slim as base
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
+    gcc \
+    python3-dev \
+    build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Create requirements file for better dependency caching
+# Dependencies stage
 FROM base as deps
+WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Final stage
+# Final stage - keep build tools for runtime in case psutil needs them
 FROM base as final
 COPY --from=deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
