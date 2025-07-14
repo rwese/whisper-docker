@@ -10,6 +10,7 @@ services:
       - WORKERS=4  # Enable multithreading with 4 workers
       - HOST=0.0.0.0
       - PORT=8000
+      - TRANSCRIPTION_API_KEY=${TRANSCRIPTION_API_KEY:-}
     volumes:
       - whisper_cache:/root/.cache/whisper
       - ./storage:/app/storage  # Persist async task storage

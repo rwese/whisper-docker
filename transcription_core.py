@@ -74,7 +74,7 @@ class TranscriptionService:
         
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
     
-    def transcribe_file(self, audio_file_path, language=None, streaming=False, original_filename=None):
+    def transcribe_file(self, audio_file_path, language=None, streaming=False, original_filename=None, temperature=0.0):
         """
         Transcribe an audio file and return structured results
         
@@ -83,6 +83,7 @@ class TranscriptionService:
             language: Language code or None for auto-detection
             streaming: Whether to return segments as they're processed
             original_filename: Original filename for language detection
+            temperature: Temperature for transcription (0.0-1.0)
             
         Returns:
             dict: {
@@ -110,7 +111,8 @@ class TranscriptionService:
             audio_file_path,
             beam_size=5,
             word_timestamps=True,
-            language=language
+            language=language,
+            temperature=temperature
         )
         
         # Process segments
@@ -139,7 +141,7 @@ class TranscriptionService:
         
         return result
     
-    def transcribe_buffer(self, audio_buffer, filename=None, language=None, streaming=False):
+    def transcribe_buffer(self, audio_buffer, filename=None, language=None, streaming=False, temperature=0.0):
         """
         Transcribe audio from a buffer/bytes object
         
@@ -148,6 +150,7 @@ class TranscriptionService:
             filename: Original filename for language detection
             language: Language code or None for auto-detection
             streaming: Whether to return segments as they're processed
+            temperature: Temperature for transcription (0.0-1.0)
             
         Returns:
             dict: Same as transcribe_file
@@ -173,7 +176,8 @@ class TranscriptionService:
                 temp_file.name,
                 language=language,
                 streaming=streaming,
-                original_filename=filename
+                original_filename=filename,
+                temperature=temperature
             )
         finally:
             # Clean up temporary file

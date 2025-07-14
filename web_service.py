@@ -10,9 +10,10 @@ import threading
 import time
 import psutil
 import logging
+import re
 from typing import Optional, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Request, Header, Depends
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -206,6 +207,55 @@ app_start_time = time.time()
 request_counter = 0
 request_counter_lock = threading.Lock()
 
+# Authentication
+API_KEY = os.environ.get("TRANSCRIPTION_API_KEY")
+
+def verify_api_key(authorization: Optional[str] = Header(None)):
+    """Verify API key if configured"""
+    if API_KEY:
+        if not authorization:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing authorization header",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authorization format. Use: Bearer <token>",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        token = authorization.split(" ", 1)[1]
+        if token != API_KEY:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid API key",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+    return True
+
+
+def get_error_response(error_message: str, error_code: str = None, http_status: int = 500):
+    """Create standardized error response"""
+    error_codes = {
+        400: "INVALID_REQUEST",
+        401: "UNAUTHORIZED", 
+        413: "FILE_TOO_LARGE",
+        415: "INVALID_FORMAT",
+        429: "RATE_LIMIT_EXCEEDED",
+        500: "TRANSCRIPTION_FAILED",
+        503: "SERVICE_UNAVAILABLE"
+    }
+    
+    code = error_code or error_codes.get(http_status, "UNKNOWN_ERROR")
+    
+    return CustomAPIErrorResponse(
+        status="error",
+        error=error_message,
+        code=code,
+        message=error_message
+    )
+
 # Middleware for logging and metrics
 @app.middleware("http")
 async def logging_middleware(request: Request, call_next):
@@ -307,6 +357,23 @@ class TranscriptionResponse(BaseModel):
     language_probability: float
     model: str
     filename: str
+
+
+class CustomAPITranscriptionResponse(BaseModel):
+    status: str
+    transcription: str
+    language: Optional[str] = None
+    confidence: Optional[float] = None
+    duration: Optional[float] = None
+    model: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class CustomAPIErrorResponse(BaseModel):
+    status: str
+    error: str
+    code: Optional[str] = None
+    message: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -609,6 +676,197 @@ async def get_task_result(task_id: str, format: Optional[str] = None):
             raise HTTPException(status_code=500, detail=f"Failed to format result: {str(e)}")
 
 
+@app.post("/transcribe", response_model=CustomAPITranscriptionResponse)
+async def transcribe_audio(
+    audio: UploadFile = File(..., description="Audio file to transcribe"),
+    model: Optional[str] = Form(default="small", description="Transcription model to use"),
+    language: Optional[str] = Form(default=None, description="Language code (e.g., 'en', 'de', 'auto')"),
+    prompt: Optional[str] = Form(default=None, description="Context prompt for better transcription"),
+    temperature: Optional[float] = Form(default=0.0, description="Temperature for transcription (0.0-1.0)"),
+    _: bool = Depends(verify_api_key)
+):
+    """
+    Transcribe audio file synchronously according to custom API specification
+    
+    This endpoint follows the custom transcription API specification for integration
+    with Obsidian Post-Processor V2.
+    """
+    
+    # Validate model
+    valid_models = ["tiny", "base", "small", "medium", "large"]
+    if model not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=get_error_response(
+                f"Invalid model '{model}'. Must be one of: {', '.join(valid_models)}",
+                "INVALID_MODEL",
+                400
+            ).dict()
+        )
+    
+    # Validate temperature
+    if temperature < 0.0 or temperature > 1.0:
+        raise HTTPException(
+            status_code=400,
+            detail=get_error_response(
+                "Temperature must be between 0.0 and 1.0",
+                "INVALID_TEMPERATURE",
+                400
+            ).dict()
+        )
+    
+    # Validate file
+    if not audio.filename:
+        raise HTTPException(
+            status_code=400,
+            detail=get_error_response(
+                "No audio file provided",
+                "INVALID_REQUEST",
+                400
+            ).dict()
+        )
+    
+    # Validate supported formats
+    supported_formats = ['.mp3', '.m4a', '.wav', '.webm', '.ogg', '.flac']
+    file_extension = os.path.splitext(audio.filename)[1].lower()
+    if file_extension not in supported_formats:
+        raise HTTPException(
+            status_code=415,
+            detail=get_error_response(
+                f"Unsupported audio format '{file_extension}'. Supported formats: {', '.join(supported_formats)}",
+                "INVALID_FORMAT",
+                415
+            ).dict()
+        )
+    
+    # Validate language if provided
+    if language and language != "auto":
+        # Basic language code validation (2-letter ISO codes)
+        if not re.match(r'^[a-z]{2}$', language):
+            raise HTTPException(
+                status_code=400,
+                detail=get_error_response(
+                    f"Invalid language code '{language}'. Use 2-letter ISO codes like 'en', 'de' or 'auto'",
+                    "INVALID_LANGUAGE",
+                    400
+                ).dict()
+            )
+    
+    try:
+        # Read file content
+        audio_content = await audio.read()
+        
+        # Check file size (25MB limit)
+        max_file_size = 25 * 1024 * 1024  # 25MB
+        if len(audio_content) > max_file_size:
+            raise HTTPException(
+                status_code=413,
+                detail=get_error_response(
+                    f"File too large. Maximum size is {max_file_size // (1024*1024)}MB",
+                    "FILE_TOO_LARGE",
+                    413
+                ).dict()
+            )
+        
+        # Update file size metrics
+        safe_metric_update('file_size_histogram', lambda: metrics['file_size_histogram'].observe(len(audio_content)))
+        
+        # Log transcription start
+        logger.info(
+            "Starting synchronous transcription",
+            filename=audio.filename,
+            file_size=len(audio_content),
+            model=model,
+            language=language,
+            prompt=prompt,
+            temperature=temperature
+        )
+        
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Starting transcription: {audio.filename} ({len(audio_content)} bytes) with model {model}", flush=True)
+        
+        # Get transcription service
+        service = get_transcription_service(model)
+        
+        # Process language parameter
+        transcription_language = None if language == "auto" else language
+        
+        # Record transcription start time
+        transcription_start_time = time.time()
+        
+        # Transcribe the audio
+        result = service.transcribe_buffer(
+            audio_content,
+            filename=audio.filename,
+            language=transcription_language,
+            temperature=temperature
+        )
+        
+        # Calculate transcription duration
+        transcription_duration = time.time() - transcription_start_time
+        
+        # Update transcription metrics
+        safe_metric_update('transcription_duration', lambda: metrics['transcription_duration'].labels(model=model).observe(transcription_duration))
+        
+        # Calculate audio duration from segments
+        audio_duration = 0.0
+        if result['segments']:
+            audio_duration = result['segments'][-1]['end']
+        
+        # Log transcription completion
+        logger.info(
+            "Transcription completed",
+            filename=audio.filename,
+            model=model,
+            language=result['language'],
+            transcription_duration=transcription_duration,
+            audio_duration=audio_duration,
+            text_length=len(result['text'])
+        )
+        
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Transcription completed: {audio.filename} ({transcription_duration:.2f}s)", flush=True)
+        
+        # Format response according to spec
+        response = CustomAPITranscriptionResponse(
+            status="success",
+            transcription=result['text'],
+            language=result['language'],
+            confidence=result['language_probability'],
+            duration=audio_duration,
+            model=model,
+            metadata={
+                "segments": result['segments'],
+                "transcription_duration": transcription_duration,
+                "prompt": prompt,
+                "temperature": temperature
+            }
+        )
+        
+        return response
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(
+            "Transcription failed",
+            filename=audio.filename,
+            model=model,
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True
+        )
+        print(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Transcription failed: {audio.filename} - {str(e)}", file=sys.stderr, flush=True)
+        
+        raise HTTPException(
+            status_code=500,
+            detail=get_error_response(
+                "Transcription process failed",
+                "TRANSCRIPTION_FAILED",
+                500
+            ).dict()
+        )
+
+
 @app.get("/api")
 async def api_info():
     """API information endpoint"""
@@ -617,6 +875,7 @@ async def api_info():
         "version": "1.0.0",
         "description": "Upload audio files for transcription using OpenAI Whisper",
         "endpoints": {
+            "POST /transcribe": "Synchronous transcription (Custom API spec)",
             "POST /transcribe/async": "Submit audio file for async transcription",
             "GET /tasks/{task_id}": "Get task status and metadata",
             "GET /tasks/{task_id}/result": "Get transcription result",

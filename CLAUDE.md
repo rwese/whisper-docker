@@ -102,6 +102,7 @@ WORKERS=4 python web_service.py
 Open http://localhost:8000 in your browser for the HTML frontend.
 
 #### API Endpoints
+- `POST /transcribe` - **NEW**: Synchronous transcription (Custom API spec for Obsidian Post-Processor V2)
 - `POST /transcribe/async` - Submit async transcription tasks
 - `GET /tasks/{task_id}` - Check task status
 - `GET /tasks/{task_id}/result` - Get transcription result
@@ -113,6 +114,26 @@ Open http://localhost:8000 in your browser for the HTML frontend.
 - `GET /openapi.json` - OpenAPI schema
 
 #### API Usage Examples
+
+##### Custom API (Synchronous)
+```bash
+# Basic synchronous transcription
+curl -X POST http://localhost:8000/transcribe \
+  -F "audio=@recording.m4a" \
+  -F "model=small" \
+  -F "language=en"
+
+# With authentication (if TRANSCRIPTION_API_KEY is set)
+curl -X POST http://localhost:8000/transcribe \
+  -H "Authorization: Bearer your-api-key" \
+  -F "audio=@recording.m4a" \
+  -F "model=medium" \
+  -F "language=auto" \
+  -F "prompt=Meeting recording" \
+  -F "temperature=0.2"
+```
+
+##### Async API (Original)
 ```bash
 # Submit async transcription task
 curl -X POST http://localhost:8000/transcribe/async \
