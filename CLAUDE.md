@@ -12,13 +12,30 @@ This is a Docker-based Whisper transcription service that converts audio files t
 - **CLI Mode** (`MODE=cli`): Traditional command-line interface for file-based transcription
 - **Web Mode** (`MODE=web`): FastAPI-based REST API with HTML frontend
 
+### Threading and Concurrency Model
+- **Thread-Safe Model Loading**: Whisper models are loaded lazily with proper locking mechanisms
+- **Sync Endpoint Threading**: `/transcribe` uses ThreadPoolExecutor (4 workers) to avoid blocking the event loop
+- **Async Processing**: `/transcribe/async` uses expanded ThreadPoolExecutor (8 workers) for background processing
+- **Multi-Worker Support**: Configurable uvicorn workers for horizontal scaling within a single process
+- **Request Timeouts**: 5-minute timeout protection for long-running transcriptions
+- **Resource Monitoring**: Enhanced health checks with memory, CPU, and threading metrics
+
+### Logging and Monitoring Architecture
+- **Structured Logging**: Uses `structlog` for JSON-formatted logs with contextual information
+- **Stdout/Stderr Output**: All operations output to stdout/stderr for easy host-level monitoring
+- **Prometheus Metrics**: Comprehensive metrics collection including request counts, durations, file sizes, and error rates
+- **Request Tracing**: Every request is logged with unique identifiers, duration, and metadata
+- **Model Loading Tracking**: Model loading events are logged with timing information
+- **Error Handling**: All errors are logged with context and stack traces
+
 ### Key Components
-- **transcription_core.py**: Centralized transcription logic using `faster-whisper`, shared between both modes. Handles automatic language detection from filename patterns (`_en.m4a`, `_de.m4a`) and supports multiple output formats (txt, json, srt, vtt, tsv)
+- **transcription_core.py**: Centralized transcription logic using `faster-whisper`, shared between both modes. Handles automatic language detection from filename patterns (`_en.m4a`, `_de.m4a`) and supports multiple output formats (txt, json, srt, vtt, tsv). Enhanced with comprehensive logging and stdout output
 - **transcribe.py**: CLI entry point with stdin support and argument parsing
-- **web_service.py**: FastAPI web service with endpoints for transcription, health checks, and API documentation  
+- **web_service.py**: FastAPI web service with endpoints for transcription, health checks, API documentation, and Prometheus metrics. Includes comprehensive logging middleware and request tracing
 - **static/index.html**: Modern HTML5 frontend with drag-and-drop file upload
 - **entrypoint.sh**: Dynamic mode switching between CLI and web service based on environment
 - **generate_client.py**: Auto-generates Python client from OpenAPI schema
+- **async_storage.py**: Async task storage and processing with background workers
 
 ### Language Detection Strategy
 1. Filename patterns (`_en`, `_de`, etc.)
@@ -51,21 +68,49 @@ cat audio.wav | docker run --rm -i -v ~/.cache/whisper:/root/.cache/whisper whis
 ### Web Service Mode
 
 #### Start Web Service
-```bash
-# Using docker-compose (recommended)
-docker-compose up whisper-web
 
-# Using direct Docker
+##### Docker Compose (Recommended)
+```bash
+# Multithreaded web service (4 workers) - Recommended
+docker-compose up -d whisper-web
+
+# Single-threaded mode for comparison
+docker-compose --profile single up -d whisper-web-single
+
+# Production deployment (8 workers)
+docker-compose -f docker-compose.prod.yml up -d whisper-web
+```
+
+##### Direct Docker
+```bash
+# Single-threaded mode
 docker run -p 8000:8000 -e MODE=web -v ~/.cache/whisper:/root/.cache/whisper whisper-cli
+
+# Multi-threaded mode
+docker run -p 8000:8000 -e MODE=web -e WORKERS=4 -v ~/.cache/whisper:/root/.cache/whisper whisper-cli
+```
+
+##### Direct Python (Development)
+```bash
+# Single-threaded mode
+python web_service.py
+
+# Multi-threaded mode
+WORKERS=4 python web_service.py
 ```
 
 #### Web Interface
 Open http://localhost:8000 in your browser for the HTML frontend.
 
 #### API Endpoints
-- `POST /transcribe` - Upload and transcribe audio files
-- `GET /health` - Health check
-- `GET /models` - List available models  
+- `POST /transcribe` - Upload and transcribe audio files (with timeout and thread pool)
+- `POST /transcribe/async` - Submit async transcription tasks
+- `GET /tasks/{task_id}` - Check task status
+- `GET /tasks/{task_id}/result` - Get transcription result
+- `GET /health` - Enhanced health check with system metrics
+- `GET /stats` - Service statistics and monitoring
+- `GET /models` - List available models
+- `GET /metrics` - Prometheus metrics endpoint for monitoring
 - `GET /docs` - Interactive API documentation
 - `GET /openapi.json` - OpenAPI schema
 
@@ -89,7 +134,63 @@ curl -X POST http://localhost:8000/transcribe \
   -F "model=small" \
   -F "language=en" \
   -F "output_format=srt"
+
+# Check service health and performance
+curl http://localhost:8000/health | jq .
+curl http://localhost:8000/stats | jq .
 ```
+
+#### Monitoring and Performance
+
+The service provides comprehensive monitoring capabilities:
+
+```bash
+# Enhanced health check with system metrics
+curl http://localhost:8000/health
+
+# Service statistics and threading information
+curl http://localhost:8000/stats
+
+# Prometheus metrics for external monitoring
+curl http://localhost:8000/metrics
+
+# Example health response
+{
+  "status": "healthy",
+  "message": "Whisper transcription service is running",
+  "uptime_seconds": 3600,
+  "memory_usage_mb": 245.5,
+  "cpu_usage_percent": 15.2,
+  "active_threads": 8,
+  "thread_pool_active": 2
+}
+```
+
+#### Available Prometheus Metrics
+- `whisper_requests_total` - Total number of requests by method, endpoint, and status code
+- `whisper_request_duration_seconds` - Request duration histogram by method and endpoint
+- `whisper_transcription_duration_seconds` - Transcription duration histogram by model
+- `whisper_file_size_bytes` - File size histogram for uploaded files
+- `whisper_active_requests` - Current number of active requests
+- `whisper_loaded_models` - Number of loaded Whisper models
+- `whisper_thread_pool_active` - Active threads in the transcription thread pool
+- `whisper_task_queue_size` - Size of the async task queue
+- `whisper_model_load_duration_seconds` - Model loading duration by model
+- `whisper_errors_total` - Total errors by type and endpoint
+
+#### Logging Configuration
+The service uses structured logging with JSON output. Set the `LOG_LEVEL` environment variable to control verbosity:
+- `DEBUG` - Detailed debugging information
+- `INFO` - Standard operational information (default)
+- `WARNING` - Warning messages only
+- `ERROR` - Error messages only
+
+#### Host-Level Monitoring
+All operations output timestamped messages to stdout/stderr for easy integration with log management systems:
+- Transcription start/completion messages to stdout
+- Error messages to stderr
+- Model loading events to stdout
+- Task creation/completion messages to stdout
 
 ### Python Client
 
@@ -133,13 +234,34 @@ python test_api.py
 pytest test_api.py -v
 ```
 
+### Concurrent Testing
+The service includes tools for testing multithreaded performance:
+
+```bash
+# Test concurrent requests (requires test_audio.wav)
+python test_concurrent.py
+
+# Or use the shell script version
+./test_concurrent.sh
+
+# Test with multiple workers
+WORKERS=4 python web_service.py &
+python test_concurrent.py
+```
+
 ### Manual Testing
 ```bash
-# Start web service
+# Start web service (single-threaded)
 docker-compose up whisper-web
 
-# Test health endpoint
-curl http://localhost:8000/health
+# Start web service (multi-threaded)
+WORKERS=4 python web_service.py
+
+# Test health endpoint with metrics
+curl http://localhost:8000/health | jq .
+
+# Test service statistics
+curl http://localhost:8000/stats | jq .
 
 # Test transcription
 curl -X POST http://localhost:8000/transcribe \

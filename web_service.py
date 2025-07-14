@@ -3,27 +3,113 @@ FastAPI web service for Whisper transcription
 """
 
 import os
+import sys
 import tempfile
 import asyncio
+import threading
+import time
+import psutil
+import logging
 from typing import Optional, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Request
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
+from concurrent.futures import ThreadPoolExecutor
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+import structlog
+from datetime import datetime, timezone
 
 from transcription_core import TranscriptionService
 from async_storage import storage
+
+# Configure structured logging
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+# Set up logging
+logging.basicConfig(
+    format="%(message)s",
+    stream=sys.stdout,
+    level=logging.INFO
+)
+
+logger = structlog.get_logger()
+
+# Prometheus metrics
+request_count = Counter(
+    'whisper_requests_total',
+    'Total number of requests',
+    ['method', 'endpoint', 'status_code']
+)
+request_duration = Histogram(
+    'whisper_request_duration_seconds',
+    'Request duration in seconds',
+    ['method', 'endpoint']
+)
+transcription_duration = Histogram(
+    'whisper_transcription_duration_seconds',
+    'Transcription duration in seconds',
+    ['model']
+)
+file_size_histogram = Histogram(
+    'whisper_file_size_bytes',
+    'Size of uploaded files in bytes'
+)
+active_requests = Gauge(
+    'whisper_active_requests',
+    'Number of active requests'
+)
+loaded_models = Gauge(
+    'whisper_loaded_models',
+    'Number of loaded models'
+)
+thread_pool_active = Gauge(
+    'whisper_thread_pool_active',
+    'Number of active threads in thread pool'
+)
+task_queue_size = Gauge(
+    'whisper_task_queue_size',
+    'Size of async task queue'
+)
+model_load_duration = Histogram(
+    'whisper_model_load_duration_seconds',
+    'Model loading duration in seconds',
+    ['model']
+)
+error_count = Counter(
+    'whisper_errors_total',
+    'Total number of errors',
+    ['error_type', 'endpoint']
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan context manager"""
     # Startup
+    logger.info("Starting Whisper transcription service", timestamp=datetime.now(timezone.utc).isoformat())
     task = asyncio.create_task(storage.start_processing_loop())
     yield
     # Shutdown
+    logger.info("Shutting down Whisper transcription service", timestamp=datetime.now(timezone.utc).isoformat())
     task.cancel()
     try:
         await task
@@ -44,14 +130,118 @@ app = FastAPI(
 # Mount static files for frontend
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Global transcription services for different models
+# Global transcription services for different models with thread safety
 transcription_services = {}
+transcription_services_lock = threading.Lock()
 
 def get_transcription_service(model_name: str) -> TranscriptionService:
-    """Get or create a transcription service for the specified model"""
-    if model_name not in transcription_services:
-        transcription_services[model_name] = TranscriptionService(model_name)
-    return transcription_services[model_name]
+    """Get or create a transcription service for the specified model (thread-safe)"""
+    with transcription_services_lock:
+        if model_name not in transcription_services:
+            logger.info("Creating new transcription service", model=model_name)
+            start_time = time.time()
+            transcription_services[model_name] = TranscriptionService(model_name)
+            model_load_duration.labels(model=model_name).observe(time.time() - start_time)
+            loaded_models.set(len(transcription_services))
+            logger.info("Transcription service created", model=model_name, total_services=len(transcription_services))
+        return transcription_services[model_name]
+
+# Thread pool for CPU-intensive transcription tasks
+transcription_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="transcription-")
+
+# Global stats for monitoring
+app_start_time = time.time()
+request_counter = 0
+request_counter_lock = threading.Lock()
+
+# Middleware for logging and metrics
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    start_time = time.time()
+    
+    # Log request start
+    logger.info(
+        "Request started",
+        method=request.method,
+        url=str(request.url),
+        client_ip=request.client.host if request.client else "unknown",
+        user_agent=request.headers.get("user-agent", "unknown")
+    )
+    
+    # Update active requests gauge
+    active_requests.inc()
+    
+    try:
+        response = await call_next(request)
+        
+        # Calculate request duration
+        duration = time.time() - start_time
+        
+        # Update metrics
+        endpoint = request.url.path
+        request_count.labels(
+            method=request.method,
+            endpoint=endpoint,
+            status_code=response.status_code
+        ).inc()
+        
+        request_duration.labels(
+            method=request.method,
+            endpoint=endpoint
+        ).observe(duration)
+        
+        # Log request completion
+        logger.info(
+            "Request completed",
+            method=request.method,
+            url=str(request.url),
+            status_code=response.status_code,
+            duration_seconds=duration,
+            client_ip=request.client.host if request.client else "unknown"
+        )
+        
+        return response
+        
+    except Exception as e:
+        # Calculate request duration for failed requests
+        duration = time.time() - start_time
+        
+        # Update error metrics
+        endpoint = request.url.path
+        error_count.labels(
+            error_type=type(e).__name__,
+            endpoint=endpoint
+        ).inc()
+        
+        request_count.labels(
+            method=request.method,
+            endpoint=endpoint,
+            status_code=500
+        ).inc()
+        
+        # Log error
+        logger.error(
+            "Request failed",
+            method=request.method,
+            url=str(request.url),
+            error=str(e),
+            error_type=type(e).__name__,
+            duration_seconds=duration,
+            client_ip=request.client.host if request.client else "unknown",
+            exc_info=True
+        )
+        
+        raise
+    
+    finally:
+        # Update active requests gauge
+        active_requests.dec()
+
+# Prometheus metrics endpoint
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint"""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 class TranscriptionResponse(BaseModel):
@@ -66,6 +256,11 @@ class TranscriptionResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     message: str
+    uptime_seconds: Optional[float] = None
+    memory_usage_mb: Optional[float] = None
+    cpu_usage_percent: Optional[float] = None
+    active_threads: Optional[int] = None
+    thread_pool_active: Optional[int] = None
 
 
 class ModelsResponse(BaseModel):
@@ -99,11 +294,34 @@ class TaskStatusResponse(BaseModel):
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Health check endpoint"""
-    return HealthResponse(
-        status="healthy",
-        message="Whisper transcription service is running"
-    )
+    """Enhanced health check endpoint with system metrics"""
+    try:
+        # Get system metrics
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        cpu_percent = process.cpu_percent()
+        
+        # Get thread information
+        active_threads = threading.active_count()
+        thread_pool_active = len([t for t in threading.enumerate() if t.name.startswith("transcription-")])
+        
+        # Calculate uptime
+        uptime = time.time() - app_start_time
+        
+        return HealthResponse(
+            status="healthy",
+            message="Whisper transcription service is running",
+            uptime_seconds=uptime,
+            memory_usage_mb=memory_info.rss / 1024 / 1024,
+            cpu_usage_percent=cpu_percent,
+            active_threads=active_threads,
+            thread_pool_active=thread_pool_active
+        )
+    except Exception as e:
+        return HealthResponse(
+            status="degraded",
+            message=f"Health check partially failed: {str(e)}"
+        )
 
 
 @app.get("/models", response_model=ModelsResponse)
@@ -117,6 +335,47 @@ async def list_models():
         {"name": "large", "size": "~2.9 GB", "description": "Highest accuracy"}
     ]
     return ModelsResponse(models=models)
+
+
+@app.get("/stats")
+async def get_stats():
+    """Get service statistics"""
+    global request_counter
+    
+    with request_counter_lock:
+        current_request_count = request_counter
+    
+    # Get loaded models
+    loaded_model_stats = []
+    with transcription_services_lock:
+        for model_name, service in transcription_services.items():
+            loaded_model_stats.append({
+                "name": model_name,
+                "loaded": service.model is not None
+            })
+    
+    # Get thread pool stats
+    thread_pool_stats = {
+        "max_workers": transcription_executor._max_workers,
+        "active_threads": len([t for t in threading.enumerate() if t.name.startswith("transcription-")]),
+        "total_threads": threading.active_count()
+    }
+    
+    # Update Prometheus gauges
+    loaded_models.set(len(loaded_model_stats))
+    thread_pool_active.set(thread_pool_stats["active_threads"])
+    task_queue_size.set(storage.processing_queue.qsize())
+    
+    return {
+        "uptime_seconds": time.time() - app_start_time,
+        "total_requests": current_request_count,
+        "loaded_models": loaded_model_stats,
+        "thread_pool": thread_pool_stats,
+        "async_storage_stats": {
+            "max_workers": storage.executor._max_workers,
+            "queue_size": storage.processing_queue.qsize()
+        }
+    }
 
 
 @app.post("/transcribe")
@@ -167,31 +426,84 @@ async def transcribe_audio(
             detail=f"Unsupported file type '{file_extension}'. Supported types: {', '.join(valid_extensions)}"
         )
     
+    # Increment request counter
+    global request_counter
+    with request_counter_lock:
+        request_counter += 1
+        
     try:
         # Read file content
         audio_content = await file.read()
         
+        # Log file details
+        logger.info(
+            "Processing audio file",
+            filename=file.filename,
+            file_size=len(audio_content),
+            model=model,
+            language=language,
+            output_format=output_format
+        )
+        
+        # Print to stdout for host monitoring
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Starting transcription: {file.filename} ({len(audio_content)} bytes) with model {model}", flush=True)
+        
+        # Update file size metrics
+        file_size_histogram.observe(len(audio_content))
+        
         # Get transcription service
         service = get_transcription_service(model)
         
-        # Transcribe audio
-        if streaming and output_format == "json":
-            # Streaming mode - return segments as they're processed
-            # Note: This is a simplified implementation
-            # In a real-world scenario, you'd want to use WebSockets or Server-Sent Events
-            result = service.transcribe_buffer(
-                audio_content,
+        # Transcribe audio in thread pool to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        transcription_start = time.time()
+        
+        try:
+            logger.info(
+                "Starting transcription",
                 filename=file.filename,
-                language=language,
-                streaming=False  # We'll collect all segments for now
+                model=model,
+                language=language
             )
-        else:
-            # Non-streaming mode
-            result = service.transcribe_buffer(
-                audio_content,
+            
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    transcription_executor,
+                    service.transcribe_buffer,
+                    audio_content,
+                    file.filename,
+                    language,
+                    False  # streaming parameter
+                ),
+                timeout=300  # 5 minute timeout
+            )
+            
+            transcription_duration.labels(model=model).observe(time.time() - transcription_start)
+            
+            logger.info(
+                "Transcription completed",
                 filename=file.filename,
-                language=language,
-                streaming=False
+                model=model,
+                language=result.get('language', 'unknown'),
+                duration_seconds=time.time() - transcription_start,
+                text_length=len(result.get('text', '')),
+                segments_count=len(result.get('segments', []))
+            )
+            
+            # Print to stdout for host monitoring
+            print(f"[{datetime.now(timezone.utc).isoformat()}] Transcription completed: {file.filename} in {time.time() - transcription_start:.2f}s ({len(result.get('text', ''))} chars)", flush=True)
+            
+        except asyncio.TimeoutError:
+            logger.error(
+                "Transcription timed out",
+                filename=file.filename,
+                model=model,
+                timeout_seconds=300
+            )
+            print(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Transcription timed out: {file.filename}", file=sys.stderr, flush=True)
+            raise HTTPException(
+                status_code=408,
+                detail="Transcription timed out after 5 minutes"
             )
         
         # Format response based on output_format
@@ -207,8 +519,10 @@ async def transcribe_audio(
             return response_data
         
         else:
-            # Return formatted text response
-            formatted_content = service.export_to_format(
+            # Return formatted text response (run in thread pool)
+            formatted_content = await loop.run_in_executor(
+                transcription_executor,
+                service.export_to_format,
                 result,
                 output_format,
                 os.path.splitext(file.filename)[0]
@@ -230,8 +544,23 @@ async def transcribe_audio(
             )
     
     except FileNotFoundError as e:
+        logger.error(
+            "File not found during transcription",
+            filename=file.filename,
+            error=str(e)
+        )
+        print(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: File not found: {file.filename} - {str(e)}", file=sys.stderr, flush=True)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.error(
+            "Transcription failed",
+            filename=file.filename,
+            model=model,
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True
+        )
+        print(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Transcription failed: {file.filename} - {str(e)}", file=sys.stderr, flush=True)
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 
@@ -288,6 +617,19 @@ async def submit_async_transcription(
         # Read file content
         audio_content = await file.read()
         
+        # Log async task creation
+        logger.info(
+            "Creating async transcription task",
+            filename=file.filename,
+            file_size=len(audio_content),
+            model=model,
+            language=language,
+            output_format=output_format
+        )
+        
+        # Print to stdout for host monitoring
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Creating async task: {file.filename} ({len(audio_content)} bytes) with model {model}", flush=True)
+        
         # Create async task
         task_info = storage.create_task(
             filename=file.filename,
@@ -297,9 +639,30 @@ async def submit_async_transcription(
             output_format=output_format
         )
         
+        # Update task queue metrics
+        task_queue_size.set(storage.processing_queue.qsize())
+        
+        logger.info(
+            "Async transcription task created",
+            task_id=task_info['task_id'],
+            filename=file.filename,
+            queue_size=storage.processing_queue.qsize()
+        )
+        
+        # Print to stdout for host monitoring
+        print(f"[{datetime.now(timezone.utc).isoformat()}] Async task created: {task_info['task_id']} for {file.filename}", flush=True)
+        
         return AsyncTaskResponse(**task_info)
         
     except Exception as e:
+        logger.error(
+            "Failed to create async task",
+            filename=file.filename,
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True
+        )
+        print(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Failed to create async task: {file.filename} - {str(e)}", file=sys.stderr, flush=True)
         raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
 
 
@@ -388,6 +751,7 @@ async def api_info():
             "GET /tasks/{task_id}/result": "Get transcription result",
             "GET /health": "Health check",
             "GET /models": "List available models",
+            "GET /metrics": "Prometheus metrics endpoint",
             "GET /docs": "Interactive API documentation",
             "GET /openapi.json": "OpenAPI schema"
         }
@@ -399,11 +763,28 @@ async def api_info():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     host = os.environ.get("HOST", "0.0.0.0")
+    workers = int(os.environ.get("WORKERS", 1))  # Default to 1 for compatibility
+    log_level = os.environ.get("LOG_LEVEL", "info").lower()
     
+    logger.info(
+        "Starting Whisper web service",
+        host=host,
+        port=port,
+        workers=workers,
+        log_level=log_level
+    )
+    
+    # Configure uvicorn with better concurrency settings
     uvicorn.run(
         "web_service:app",
         host=host,
         port=port,
+        workers=workers if workers > 1 else None,  # Use multiprocessing only if workers > 1
         reload=False,
-        access_log=True
+        access_log=True,
+        log_level=log_level,
+        timeout_keep_alive=30,
+        timeout_graceful_shutdown=30,
+        limit_concurrency=100,  # Limit concurrent requests
+        limit_max_requests=1000  # Restart workers after 1000 requests to prevent memory leaks
     )
