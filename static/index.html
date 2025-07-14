@@ -151,6 +151,49 @@
             color: #007AFF;
             font-size: 12px;
         }
+        #taskHistory {
+            margin-top: 30px;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        #taskHistory h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #007AFF;
+            padding-bottom: 10px;
+        }
+        .task-item {
+            background: #f8f9fa;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            border-left: 3px solid #007AFF;
+        }
+        .task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .task-date {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .task-action-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            margin-top: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .task-action-btn:hover {
+            background: #218838;
+        }
     </style>
 </head>
 <body>
@@ -213,10 +256,15 @@
         
         <div class="progress" id="progress">
             <div class="progress-bar" id="progressBar"></div>
-            <p style="text-align: center; margin-top: 10px;">Processing your audio file...</p>
+            <p style="text-align: center; margin-top: 10px;" id="progressText">Processing your audio file...</p>
         </div>
         
         <div id="result"></div>
+        
+        <div id="taskHistory" style="display: none;">
+            <h3>Recent Tasks</h3>
+            <div id="taskList"></div>
+        </div>
     </div>
 
     <script>
@@ -296,23 +344,20 @@
 
         async function handleSyncProcessing(formData) {
             transcribeBtn.textContent = '⏳ Processing...';
-            
-            // Simulate progress
-            let progressValue = 0;
-            const progressInterval = setInterval(() => {
-                progressValue += Math.random() * 15;
-                if (progressValue > 90) progressValue = 90;
-                progressBar.style.width = progressValue + '%';
-            }, 500);
+            progressBar.style.width = '10%';
+            document.getElementById('progressText').textContent = 'Processing your audio file...';
             
             try {
+                progressBar.style.width = '50%';
+                document.getElementById('progressText').textContent = 'Transcribing audio...';
+                
                 const response = await fetch('/transcribe', {
                     method: 'POST',
                     body: formData
                 });
                 
-                clearInterval(progressInterval);
                 progressBar.style.width = '100%';
+                document.getElementById('progressText').textContent = 'Processing complete!';
                 
                 if (!response.ok) {
                     const error = await response.json();
@@ -330,7 +375,6 @@
                 }
                 
             } catch (error) {
-                clearInterval(progressInterval);
                 displayError(error.message);
             } finally {
                 transcribeBtn.disabled = false;
@@ -342,7 +386,8 @@
 
         async function handleAsyncProcessing(formData) {
             transcribeBtn.textContent = '📤 Submitting...';
-            progressBar.style.width = '20%';
+            progressBar.style.width = '10%';
+            document.getElementById('progressText').textContent = 'Submitting transcription task...';
             
             try {
                 // Submit async task
@@ -357,13 +402,16 @@
                 }
                 
                 const taskInfo = await response.json();
-                progressBar.style.width = '40%';
+                progressBar.style.width = '25%';
                 
                 if (taskInfo.duplicate) {
                     displayAsyncResult(`✨ Found existing task for this file`, taskInfo);
                 } else {
                     displayAsyncResult(`📋 Task submitted successfully`, taskInfo);
                 }
+                
+                // Save task to history
+                saveTaskToHistory(taskInfo);
                 
                 // Start polling for result
                 pollTaskStatus(taskInfo.task_id);
@@ -390,11 +438,15 @@
                     
                     if (status.status === 'completed') {
                         clearInterval(pollInterval);
+                        updateTaskInHistory(taskId, 'completed');
                         await fetchTaskResult(taskId);
                     } else if (status.status === 'failed') {
                         clearInterval(pollInterval);
+                        updateTaskInHistory(taskId, 'failed');
                         displayError(`Task failed: ${status.error_message}`);
                         resetForm();
+                    } else {
+                        updateTaskInHistory(taskId, status.status);
                     }
                     
                 } catch (error) {
@@ -407,15 +459,16 @@
 
         function updateTaskStatus(status) {
             const statusMap = {
-                'pending': { text: '⏳ Queued for processing...', progress: 50 },
-                'processing': { text: '🔄 Processing audio...', progress: 75 },
-                'completed': { text: '✅ Processing complete!', progress: 100 },
-                'failed': { text: '❌ Processing failed', progress: 100 }
+                'pending': { text: '⏳ Queued for processing...', progress: 40, progressText: 'Task is queued, waiting to start...' },
+                'processing': { text: '🔄 Processing audio...', progress: 70, progressText: 'Transcribing audio with Whisper model...' },
+                'completed': { text: '✅ Processing complete!', progress: 100, progressText: 'Transcription completed successfully!' },
+                'failed': { text: '❌ Processing failed', progress: 100, progressText: 'Task failed to process' }
             };
             
-            const statusInfo = statusMap[status.status] || { text: status.status, progress: 60 };
+            const statusInfo = statusMap[status.status] || { text: status.status, progress: 60, progressText: 'Processing...' };
             transcribeBtn.textContent = statusInfo.text;
             progressBar.style.width = statusInfo.progress + '%';
+            document.getElementById('progressText').textContent = statusInfo.progressText;
         }
 
         async function fetchTaskResult(taskId) {
@@ -608,6 +661,104 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
+        
+        // Task history management
+        let taskHistory = JSON.parse(localStorage.getItem('whisper-tasks') || '[]');
+        
+        function saveTaskToHistory(taskInfo) {
+            const task = {
+                id: taskInfo.task_id,
+                filename: taskInfo.filename,
+                created_at: taskInfo.created_at,
+                status: 'pending'
+            };
+            
+            // Remove existing task with same ID
+            taskHistory = taskHistory.filter(t => t.id !== task.id);
+            
+            // Add new task to beginning
+            taskHistory.unshift(task);
+            
+            // Keep only last 10 tasks
+            taskHistory = taskHistory.slice(0, 10);
+            
+            localStorage.setItem('whisper-tasks', JSON.stringify(taskHistory));
+            updateTaskHistoryDisplay();
+        }
+        
+        function updateTaskInHistory(taskId, status) {
+            const task = taskHistory.find(t => t.id === taskId);
+            if (task) {
+                task.status = status;
+                localStorage.setItem('whisper-tasks', JSON.stringify(taskHistory));
+                updateTaskHistoryDisplay();
+            }
+        }
+        
+        function updateTaskHistoryDisplay() {
+            const taskList = document.getElementById('taskList');
+            const taskHistoryDiv = document.getElementById('taskHistory');
+            
+            if (taskHistory.length === 0) {
+                taskHistoryDiv.style.display = 'none';
+                return;
+            }
+            
+            taskHistoryDiv.style.display = 'block';
+            
+            taskList.innerHTML = taskHistory.map(task => {
+                const statusEmoji = {
+                    'pending': '⏳',
+                    'processing': '🔄',
+                    'completed': '✅',
+                    'failed': '❌'
+                };
+                
+                return `
+                    <div class="task-item">
+                        <div class="task-header">
+                            <span><strong>${task.filename}</strong></span>
+                            <span>${statusEmoji[task.status] || '❓'} ${task.status}</span>
+                        </div>
+                        <div class="task-date">
+                            ${new Date(task.created_at).toLocaleString()}
+                        </div>
+                        ${task.status === 'completed' ? `
+                            <button onclick="loadTaskResult('${task.id}')" class="task-action-btn">
+                                📄 View Result
+                            </button>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        async function loadTaskResult(taskId) {
+            try {
+                const response = await fetch(`/tasks/${taskId}/result`);
+                if (!response.ok) {
+                    throw new Error('Failed to load result');
+                }
+                
+                const contentType = response.headers.get('content-type');
+                
+                if (contentType && contentType.includes('application/json')) {
+                    const data = await response.json();
+                    displayAsyncJsonResult(data);
+                } else {
+                    const text = await response.text();
+                    displayTextResult(text, 'txt');
+                }
+                
+            } catch (error) {
+                displayError(`Failed to load result: ${error.message}`);
+            }
+        }
+        
+        // Load task history on page load
+        window.addEventListener('load', () => {
+            updateTaskHistoryDisplay();
+        });
     </script>
 </body>
 </html>
