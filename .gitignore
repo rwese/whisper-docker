@@ -38,3 +38,15 @@ __pycache__/
 # Environment
 .env
 .envrc
+
+# Runtime storage and testing
+storage/files/*
+!storage/files/.gitkeep
+storage/results/*
+!storage/results/.gitkeep
+storage/tasks/*
+!storage/tasks/.gitkeep
+.pytest_cache/
+test_*.tmp
+*.tmp
+*.bin
