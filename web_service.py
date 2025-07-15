@@ -61,6 +61,7 @@ from datetime import datetime, timezone
 
 from async_storage import storage
 from transcription_core import TranscriptionService
+from file_security import validate_uploaded_file, FileValidationError
 
 # Configure structured logging
 if STRUCTLOG_AVAILABLE:
@@ -610,54 +611,63 @@ async def submit_async_transcription(
             detail=f"Invalid output format '{output_format}'. Must be one of: {', '.join(valid_formats)}",
         )
 
-    # Validate file type
+    # Validate file
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
-
-    # Common audio file extensions
-    valid_extensions = [
-        ".mp3",
-        ".wav",
-        ".m4a",
-        ".flac",
-        ".ogg",
-        ".wma",
-        ".aac",
-        ".mp4",
-        ".mov",
-        ".avi",
-        ".mkv",
-    ]
-    file_extension = os.path.splitext(file.filename)[1].lower()
-    if file_extension not in valid_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{file_extension}'. Supported types: {', '.join(valid_extensions)}",
-        )
 
     try:
         # Read file content
         audio_content = await file.read()
 
+        # Security validation
+        try:
+            validation_result = validate_uploaded_file(audio_content, file.filename)
+            # Use sanitized filename
+            safe_filename = validation_result['filename']
+
+            # Log validation results including any anomalies
+            if validation_result.get('anomalies'):
+                logger.warning(
+                    "File validation anomalies detected",
+                    filename=safe_filename,
+                    anomalies=validation_result['anomalies'],
+                    file_hash=validation_result['file_hash']
+                )
+        except FileValidationError as e:
+            logger.error(
+                "File validation failed",
+                filename=file.filename,
+                error=str(e),
+                error_code=e.error_code
+            )
+            raise HTTPException(
+                status_code=400 if e.error_code in ['EMPTY_FILE', 'EMPTY_FILENAME', 'SUSPICIOUS_FILENAME', 'FILENAME_TOO_LONG', 'INVALID_FILENAME_CHARS']
+                else 415 if e.error_code in ['UNSUPPORTED_FORMAT', 'INVALID_STRUCTURE']
+                else 413 if e.error_code in ['FILE_TOO_LARGE', 'FORMAT_SIZE_EXCEEDED']
+                else 422,
+                detail=str(e)
+            )
+
         # Log async task creation
         logger.info(
             "Creating async transcription task",
-            filename=file.filename,
+            filename=safe_filename,
             file_size=len(audio_content),
             model=model,
             language=language,
             output_format=output_format,
+            detected_type=validation_result['detected_type'],
         )
 
         # Print to stdout for host monitoring
         print(
-            f"[{datetime.now(timezone.utc).isoformat()}] Creating async task: {file.filename} ({len(audio_content)} bytes) with model {model}",
+            f"[{datetime.now(timezone.utc).isoformat()}] Creating async task: {safe_filename} ({len(audio_content)} bytes) with model {model}",
             flush=True,
         )
 
         # Create async task
         task_info = storage.create_task(
-            filename=file.filename,
+            filename=safe_filename,
             file_content=audio_content,
             model=model,
             language=language,
@@ -673,18 +683,21 @@ async def submit_async_transcription(
         logger.info(
             "Async transcription task created",
             task_id=task_info["task_id"],
-            filename=file.filename,
+            filename=safe_filename,
             queue_size=storage.processing_queue.qsize(),
         )
 
         # Print to stdout for host monitoring
         print(
-            f"[{datetime.now(timezone.utc).isoformat()}] Async task created: {task_info['task_id']} for {file.filename}",
+            f"[{datetime.now(timezone.utc).isoformat()}] Async task created: {task_info['task_id']} for {safe_filename}",
             flush=True,
         )
 
         return AsyncTaskResponse(**task_info)
 
+    except HTTPException:
+        # Re-raise HTTPExceptions (validation errors)
+        raise
     except Exception as e:
         logger.error(
             "Failed to create async task",
@@ -831,19 +844,6 @@ async def transcribe_audio(
             ).dict(),
         )
 
-    # Validate supported formats
-    supported_formats = [".mp3", ".m4a", ".wav", ".webm", ".ogg", ".flac"]
-    file_extension = os.path.splitext(audio.filename)[1].lower()
-    if file_extension not in supported_formats:
-        raise HTTPException(
-            status_code=415,
-            detail=get_error_response(
-                f"Unsupported audio format '{file_extension}'. Supported formats: {', '.join(supported_formats)}",
-                "INVALID_FORMAT",
-                415,
-            ).dict(),
-        )
-
     # Validate language if provided
     if language and language != "auto":
         # Basic language code validation (2-letter ISO codes)
@@ -861,16 +861,42 @@ async def transcribe_audio(
         # Read file content
         audio_content = await audio.read()
 
-        # Check file size (25MB limit)
-        max_file_size = 25 * 1024 * 1024  # 25MB
-        if len(audio_content) > max_file_size:
+        # Security validation
+        try:
+            validation_result = validate_uploaded_file(audio_content, audio.filename)
+            # Use sanitized filename
+            safe_filename = validation_result['filename']
+
+            # Log validation results including any anomalies
+            if validation_result.get('anomalies'):
+                logger.warning(
+                    "File validation anomalies detected",
+                    filename=safe_filename,
+                    anomalies=validation_result['anomalies'],
+                    file_hash=validation_result['file_hash']
+                )
+        except FileValidationError as e:
+            logger.error(
+                "File validation failed",
+                filename=audio.filename,
+                error=str(e),
+                error_code=e.error_code
+            )
+            # Map validation errors to appropriate HTTP status codes
+            if e.error_code in ['EMPTY_FILE', 'EMPTY_FILENAME', 'SUSPICIOUS_FILENAME', 'FILENAME_TOO_LONG', 'INVALID_FILENAME_CHARS']:
+                status_code, error_code = 400, "INVALID_REQUEST"
+            elif e.error_code in ['UNSUPPORTED_FORMAT', 'INVALID_STRUCTURE']:
+                status_code, error_code = 415, "INVALID_FORMAT"
+            elif e.error_code in ['FILE_TOO_LARGE', 'FORMAT_SIZE_EXCEEDED']:
+                status_code, error_code = 413, "FILE_TOO_LARGE"
+            elif e.error_code in ['DANGEROUS_FILE_TYPE', 'SECURITY_VIOLATION']:
+                status_code, error_code = 422, "SECURITY_VIOLATION"
+            else:
+                status_code, error_code = 422, "VALIDATION_FAILED"
+
             raise HTTPException(
-                status_code=413,
-                detail=get_error_response(
-                    f"File too large. Maximum size is {max_file_size // (1024*1024)}MB",
-                    "FILE_TOO_LARGE",
-                    413,
-                ).dict(),
+                status_code=status_code,
+                detail=get_error_response(str(e), error_code, status_code).dict(),
             )
 
         # Update file size metrics
@@ -882,16 +908,17 @@ async def transcribe_audio(
         # Log transcription start
         logger.info(
             "Starting synchronous transcription",
-            filename=audio.filename,
+            filename=safe_filename,
             file_size=len(audio_content),
             model=model,
             language=language,
             prompt=prompt,
             temperature=temperature,
+            detected_type=validation_result['detected_type'],
         )
 
         print(
-            f"[{datetime.now(timezone.utc).isoformat()}] Starting transcription: {audio.filename} ({len(audio_content)} bytes) with model {model}",
+            f"[{datetime.now(timezone.utc).isoformat()}] Starting transcription: {safe_filename} ({len(audio_content)} bytes) with model {model}",
             flush=True,
         )
 
@@ -907,7 +934,7 @@ async def transcribe_audio(
         # Transcribe the audio
         result = service.transcribe_buffer(
             audio_content,
-            filename=audio.filename,
+            filename=safe_filename,
             language=transcription_language,
             temperature=temperature,
         )
@@ -931,7 +958,7 @@ async def transcribe_audio(
         # Log transcription completion
         logger.info(
             "Transcription completed",
-            filename=audio.filename,
+            filename=safe_filename,
             model=model,
             language=result["language"],
             transcription_duration=transcription_duration,
@@ -940,7 +967,7 @@ async def transcribe_audio(
         )
 
         print(
-            f"[{datetime.now(timezone.utc).isoformat()}] Transcription completed: {audio.filename} ({transcription_duration:.2f}s)",
+            f"[{datetime.now(timezone.utc).isoformat()}] Transcription completed: {safe_filename} ({transcription_duration:.2f}s)",
             flush=True,
         )
 
@@ -966,16 +993,18 @@ async def transcribe_audio(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
+        # Use safe_filename if available, otherwise fall back to original
+        error_filename = locals().get('safe_filename', audio.filename)
         logger.error(
             "Transcription failed",
-            filename=audio.filename,
+            filename=error_filename,
             model=model,
             error=str(e),
             error_type=type(e).__name__,
             exc_info=True,
         )
         print(
-            f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Transcription failed: {audio.filename} - {str(e)}",
+            f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Transcription failed: {error_filename} - {str(e)}",
             file=sys.stderr,
             flush=True,
         )
