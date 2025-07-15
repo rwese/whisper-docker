@@ -14,7 +14,7 @@ This is a Docker-based Whisper transcription service that converts audio files t
 
 ### Threading and Concurrency Model
 - **Thread-Safe Model Loading**: Whisper models are loaded lazily with proper locking mechanisms
-- **Async Processing**: Background processing with expanded ThreadPoolExecutor (8 workers)
+- **Async Processing**: Background processing with configurable ThreadPoolExecutor (controlled by MAX_PARALLEL_PROCESSING, default: 1)
 - **Multi-Worker Support**: Configurable uvicorn workers for horizontal scaling within a single process
 - **Request Timeouts**: Built-in task timeout protection
 - **Resource Monitoring**: Enhanced health checks with memory, CPU, and threading metrics
@@ -85,8 +85,8 @@ docker-compose -f docker-compose.prod.yml up -d whisper-web
 # Single-threaded mode
 docker run -p 8000:8000 -e MODE=web -v ~/.cache/whisper:/root/.cache/whisper whisper-cli
 
-# Multi-threaded mode
-docker run -p 8000:8000 -e MODE=web -e WORKERS=4 -v ~/.cache/whisper:/root/.cache/whisper whisper-cli
+# Multi-threaded mode with parallel processing
+docker run -p 8000:8000 -e MODE=web -e WORKERS=4 -e MAX_PARALLEL_PROCESSING=2 -v ~/.cache/whisper:/root/.cache/whisper whisper-cli
 ```
 
 ##### Direct Python (Development)
@@ -94,8 +94,8 @@ docker run -p 8000:8000 -e MODE=web -e WORKERS=4 -v ~/.cache/whisper:/root/.cach
 # Single-threaded mode
 python web_service.py
 
-# Multi-threaded mode
-WORKERS=4 python web_service.py
+# Multi-threaded mode with parallel processing
+WORKERS=4 MAX_PARALLEL_PROCESSING=2 python web_service.py
 ```
 
 #### Web Interface
@@ -303,6 +303,31 @@ curl -X POST http://localhost:8000/transcribe/async \
   -F "file=@test.m4a" \
   -F "model=tiny" \
   -F "output_format=json"
+```
+
+## Environment Variables
+
+### Core Configuration
+- `MODE` - Operating mode: `cli` (command-line) or `web` (web service)
+- `WORKERS` - Number of uvicorn workers for horizontal scaling (default: 1)
+- `MAX_PARALLEL_PROCESSING` - Maximum parallel transcription tasks (default: 1)
+- `HOST` - Web service host (default: 0.0.0.0)
+- `PORT` - Web service port (default: 8000)
+- `LOG_LEVEL` - Logging level: DEBUG, INFO, WARNING, ERROR (default: INFO)
+
+### Authentication
+- `TRANSCRIPTION_API_KEY` - Optional API key for the synchronous /transcribe endpoint
+
+### Example Usage
+```bash
+# Single-threaded processing (default)
+docker run -e MODE=web -e MAX_PARALLEL_PROCESSING=1 whisper-cli
+
+# Balanced configuration for moderate load
+docker run -e MODE=web -e WORKERS=2 -e MAX_PARALLEL_PROCESSING=2 whisper-cli
+
+# High-performance configuration for heavy load
+docker run -e MODE=web -e WORKERS=4 -e MAX_PARALLEL_PROCESSING=4 whisper-cli
 ```
 
 ## Available Models

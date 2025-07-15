@@ -194,6 +194,134 @@
         .task-action-btn:hover {
             background: #218838;
         }
+
+        /* Navigation Tabs */
+        .nav-tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .nav-tab {
+            background: none;
+            border: none;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-size: 16px;
+            color: #666;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+        }
+        .nav-tab:hover {
+            color: #007AFF;
+            background: rgba(0, 122, 255, 0.1);
+        }
+        .nav-tab.active {
+            color: #007AFF;
+            border-bottom-color: #007AFF;
+            background: rgba(0, 122, 255, 0.1);
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        /* API Documentation Styles */
+        .api-endpoint {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        .api-endpoint-header {
+            background: #e9ecef;
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .api-endpoint-header:hover {
+            background: #dee2e6;
+        }
+        .api-method {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: white;
+            font-size: 12px;
+            margin-right: 10px;
+        }
+        .api-method.GET { background: #28a745; }
+        .api-method.POST { background: #007bff; }
+        .api-method.PUT { background: #ffc107; color: #212529; }
+        .api-method.DELETE { background: #dc3545; }
+        .api-endpoint-content {
+            padding: 20px;
+            display: none;
+        }
+        .api-endpoint-content.show {
+            display: block;
+        }
+        .api-test-form {
+            background: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        .api-test-form h4 {
+            margin-top: 0;
+            color: #495057;
+        }
+        .api-form-group {
+            margin-bottom: 15px;
+        }
+        .api-form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        .api-form-group input, .api-form-group select, .api-form-group textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .api-test-btn {
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .api-test-btn:hover {
+            background: #0056b3;
+        }
+        .api-response {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 15px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .api-response.success {
+            border-left: 4px solid #28a745;
+        }
+        .api-response.error {
+            border-left: 4px solid #dc3545;
+        }
     </style>
 </head>
 <body>
@@ -201,7 +329,15 @@
         <h1>🎤 Whisper Transcription Service</h1>
         <p style="text-align: center; color: #666; margin-bottom: 30px; font-style: italic;">Async processing for better performance and reliability</p>
 
-        <form id="transcriptionForm">
+        <!-- Navigation Tabs -->
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="showTab('transcription')">📤 Transcription</button>
+            <button class="nav-tab" onclick="showTab('api-docs')">📚 API Documentation</button>
+        </div>
+
+        <!-- Transcription Tab -->
+        <div id="transcription" class="tab-content active">
+            <form id="transcriptionForm">
             <div class="upload-area" id="uploadArea">
                 <p>📁 Drag and drop an audio file here or click to select</p>
                 <input type="file" id="audioFile" class="file-input" accept="audio/*,video/*" required>
@@ -255,9 +391,229 @@
 
         <div id="result"></div>
 
-        <div id="taskHistory" style="display: none;">
-            <h3>Recent Tasks</h3>
-            <div id="taskList"></div>
+            <div id="taskHistory" style="display: none;">
+                <h3>Recent Tasks</h3>
+                <div id="taskList"></div>
+            </div>
+        </div>
+
+        <!-- API Documentation Tab -->
+        <div id="api-docs" class="tab-content">
+            <h2>🔗 API Endpoints</h2>
+            <p>Interactive API documentation for the Whisper transcription service.</p>
+
+            <div class="api-endpoint">
+                <div class="api-endpoint-header" onclick="toggleEndpoint('sync-transcribe')">
+                    <div>
+                        <span class="api-method POST">POST</span>
+                        <strong>/transcribe</strong> - Synchronous transcription
+                    </div>
+                    <span>▼</span>
+                </div>
+                <div id="sync-transcribe" class="api-endpoint-content">
+                    <p>Upload an audio file and get transcription results immediately.</p>
+                    <h4>Parameters:</h4>
+                    <ul>
+                        <li><strong>audio</strong> (file, required) - Audio file to transcribe</li>
+                        <li><strong>model</strong> (string, optional) - Whisper model (tiny, base, small, medium, large)</li>
+                        <li><strong>language</strong> (string, optional) - Language code (e.g., 'en', 'de')</li>
+                        <li><strong>prompt</strong> (string, optional) - Initial prompt to guide transcription</li>
+                        <li><strong>temperature</strong> (number, optional) - Sampling temperature (0.0 to 1.0)</li>
+                    </ul>
+
+                    <div class="api-test-form">
+                        <h4>🧪 Test this endpoint</h4>
+                        <div class="api-form-group">
+                            <label for="sync-file">Audio File:</label>
+                            <input type="file" id="sync-file" accept="audio/*,video/*">
+                        </div>
+                        <div class="api-form-group">
+                            <label for="sync-model">Model:</label>
+                            <select id="sync-model">
+                                <option value="tiny">Tiny</option>
+                                <option value="base">Base</option>
+                                <option value="small" selected>Small</option>
+                                <option value="medium">Medium</option>
+                                <option value="large">Large</option>
+                            </select>
+                        </div>
+                        <div class="api-form-group">
+                            <label for="sync-language">Language (optional):</label>
+                            <input type="text" id="sync-language" placeholder="e.g., en, de, fr">
+                        </div>
+                        <div class="api-form-group">
+                            <label for="sync-prompt">Prompt (optional):</label>
+                            <input type="text" id="sync-prompt" placeholder="Initial prompt to guide transcription">
+                        </div>
+                        <button class="api-test-btn" onclick="testSyncTranscribe()">Test API Call</button>
+                        <div id="sync-response" class="api-response" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="api-endpoint">
+                <div class="api-endpoint-header" onclick="toggleEndpoint('async-transcribe')">
+                    <div>
+                        <span class="api-method POST">POST</span>
+                        <strong>/transcribe/async</strong> - Asynchronous transcription
+                    </div>
+                    <span>▼</span>
+                </div>
+                <div id="async-transcribe" class="api-endpoint-content">
+                    <p>Submit a transcription task for background processing.</p>
+                    <h4>Parameters:</h4>
+                    <ul>
+                        <li><strong>file</strong> (file, required) - Audio file to transcribe</li>
+                        <li><strong>model</strong> (string, optional) - Whisper model</li>
+                        <li><strong>language</strong> (string, optional) - Language code</li>
+                        <li><strong>output_format</strong> (string, optional) - Output format (json, txt, srt, vtt, tsv)</li>
+                    </ul>
+
+                    <div class="api-test-form">
+                        <h4>🧪 Test this endpoint</h4>
+                        <div class="api-form-group">
+                            <label for="async-file">Audio File:</label>
+                            <input type="file" id="async-file" accept="audio/*,video/*">
+                        </div>
+                        <div class="api-form-group">
+                            <label for="async-model">Model:</label>
+                            <select id="async-model">
+                                <option value="tiny">Tiny</option>
+                                <option value="base">Base</option>
+                                <option value="small" selected>Small</option>
+                                <option value="medium">Medium</option>
+                                <option value="large">Large</option>
+                            </select>
+                        </div>
+                        <div class="api-form-group">
+                            <label for="async-format">Output Format:</label>
+                            <select id="async-format">
+                                <option value="json" selected>JSON</option>
+                                <option value="txt">Plain Text</option>
+                                <option value="srt">SRT Subtitles</option>
+                                <option value="vtt">WebVTT</option>
+                                <option value="tsv">TSV</option>
+                            </select>
+                        </div>
+                        <button class="api-test-btn" onclick="testAsyncTranscribe()">Test API Call</button>
+                        <div id="async-response" class="api-response" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="api-endpoint">
+                <div class="api-endpoint-header" onclick="toggleEndpoint('task-status')">
+                    <div>
+                        <span class="api-method GET">GET</span>
+                        <strong>/tasks/{task_id}</strong> - Get task status
+                    </div>
+                    <span>▼</span>
+                </div>
+                <div id="task-status" class="api-endpoint-content">
+                    <p>Check the status of an asynchronous transcription task.</p>
+                    <h4>Parameters:</h4>
+                    <ul>
+                        <li><strong>task_id</strong> (path, required) - Task ID returned from async transcription</li>
+                    </ul>
+
+                    <div class="api-test-form">
+                        <h4>🧪 Test this endpoint</h4>
+                        <div class="api-form-group">
+                            <label for="status-task-id">Task ID:</label>
+                            <input type="text" id="status-task-id" placeholder="Enter task ID">
+                        </div>
+                        <button class="api-test-btn" onclick="testTaskStatus()">Test API Call</button>
+                        <div id="status-response" class="api-response" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="api-endpoint">
+                <div class="api-endpoint-header" onclick="toggleEndpoint('task-result')">
+                    <div>
+                        <span class="api-method GET">GET</span>
+                        <strong>/tasks/{task_id}/result</strong> - Get task result
+                    </div>
+                    <span>▼</span>
+                </div>
+                <div id="task-result" class="api-endpoint-content">
+                    <p>Retrieve the transcription result for a completed task.</p>
+                    <h4>Parameters:</h4>
+                    <ul>
+                        <li><strong>task_id</strong> (path, required) - Task ID of completed transcription</li>
+                        <li><strong>format</strong> (query, optional) - Response format override</li>
+                    </ul>
+
+                    <div class="api-test-form">
+                        <h4>🧪 Test this endpoint</h4>
+                        <div class="api-form-group">
+                            <label for="result-task-id">Task ID:</label>
+                            <input type="text" id="result-task-id" placeholder="Enter task ID">
+                        </div>
+                        <div class="api-form-group">
+                            <label for="result-format">Format (optional):</label>
+                            <select id="result-format">
+                                <option value="">Default</option>
+                                <option value="json">JSON</option>
+                                <option value="txt">Plain Text</option>
+                                <option value="srt">SRT</option>
+                                <option value="vtt">WebVTT</option>
+                                <option value="tsv">TSV</option>
+                            </select>
+                        </div>
+                        <button class="api-test-btn" onclick="testTaskResult()">Test API Call</button>
+                        <div id="result-response" class="api-response" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="api-endpoint">
+                <div class="api-endpoint-header" onclick="toggleEndpoint('health')">
+                    <div>
+                        <span class="api-method GET">GET</span>
+                        <strong>/health</strong> - Health check
+                    </div>
+                    <span>▼</span>
+                </div>
+                <div id="health" class="api-endpoint-content">
+                    <p>Check service health and system metrics.</p>
+
+                    <div class="api-test-form">
+                        <h4>🧪 Test this endpoint</h4>
+                        <button class="api-test-btn" onclick="testHealth()">Test API Call</button>
+                        <div id="health-response" class="api-response" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="api-endpoint">
+                <div class="api-endpoint-header" onclick="toggleEndpoint('models')">
+                    <div>
+                        <span class="api-method GET">GET</span>
+                        <strong>/models</strong> - List available models
+                    </div>
+                    <span>▼</span>
+                </div>
+                <div id="models" class="api-endpoint-content">
+                    <p>Get a list of available Whisper models.</p>
+
+                    <div class="api-test-form">
+                        <h4>🧪 Test this endpoint</h4>
+                        <button class="api-test-btn" onclick="testModels()">Test API Call</button>
+                        <div id="models-response" class="api-response" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 30px; padding: 20px; background: #e9ecef; border-radius: 8px;">
+                <h3>📖 More Documentation</h3>
+                <p>For complete API documentation with schemas and examples, visit:</p>
+                <ul>
+                    <li><a href="/docs" target="_blank">Interactive API Documentation (Swagger UI)</a></li>
+                    <li><a href="/openapi.json" target="_blank">OpenAPI Schema (JSON)</a></li>
+                    <li><a href="/metrics" target="_blank">Prometheus Metrics</a></li>
+                </ul>
+            </div>
         </div>
     </div>
 
@@ -707,6 +1063,185 @@
         window.addEventListener('load', () => {
             updateTaskHistoryDisplay();
         });
+
+        // Tab switching functionality
+        function showTab(tabName) {
+            // Hide all tab contents
+            const tabs = document.querySelectorAll('.tab-content');
+            tabs.forEach(tab => tab.classList.remove('active'));
+
+            // Remove active class from all nav tabs
+            const navTabs = document.querySelectorAll('.nav-tab');
+            navTabs.forEach(tab => tab.classList.remove('active'));
+
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+
+            // Mark nav tab as active
+            const activeNavTab = document.querySelector(`[onclick="showTab('${tabName}')"]`);
+            if (activeNavTab) {
+                activeNavTab.classList.add('active');
+            }
+        }
+
+        // API Documentation functionality
+        function toggleEndpoint(endpointId) {
+            const content = document.getElementById(endpointId);
+            const header = content.previousElementSibling;
+            const arrow = header.querySelector('span:last-child');
+
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                arrow.textContent = '▼';
+            } else {
+                content.classList.add('show');
+                arrow.textContent = '▲';
+            }
+        }
+
+        // API Testing functions
+        async function testSyncTranscribe() {
+            const file = document.getElementById('sync-file').files[0];
+            const model = document.getElementById('sync-model').value;
+            const language = document.getElementById('sync-language').value;
+            const prompt = document.getElementById('sync-prompt').value;
+            const responseDiv = document.getElementById('sync-response');
+
+            if (!file) {
+                showApiResponse(responseDiv, 'Please select an audio file', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('audio', file);
+            formData.append('model', model);
+            if (language) formData.append('language', language);
+            if (prompt) formData.append('prompt', prompt);
+
+            try {
+                showApiResponse(responseDiv, 'Sending request...', 'info');
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                showApiResponse(responseDiv, JSON.stringify(result, null, 2), response.ok ? 'success' : 'error');
+            } catch (error) {
+                showApiResponse(responseDiv, `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testAsyncTranscribe() {
+            const file = document.getElementById('async-file').files[0];
+            const model = document.getElementById('async-model').value;
+            const format = document.getElementById('async-format').value;
+            const responseDiv = document.getElementById('async-response');
+
+            if (!file) {
+                showApiResponse(responseDiv, 'Please select an audio file', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('model', model);
+            formData.append('output_format', format);
+
+            try {
+                showApiResponse(responseDiv, 'Sending request...', 'info');
+                const response = await fetch('/transcribe/async', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                showApiResponse(responseDiv, JSON.stringify(result, null, 2), response.ok ? 'success' : 'error');
+            } catch (error) {
+                showApiResponse(responseDiv, `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testTaskStatus() {
+            const taskId = document.getElementById('status-task-id').value;
+            const responseDiv = document.getElementById('status-response');
+
+            if (!taskId) {
+                showApiResponse(responseDiv, 'Please enter a task ID', 'error');
+                return;
+            }
+
+            try {
+                showApiResponse(responseDiv, 'Fetching task status...', 'info');
+                const response = await fetch(`/tasks/${taskId}`);
+                const result = await response.json();
+                showApiResponse(responseDiv, JSON.stringify(result, null, 2), response.ok ? 'success' : 'error');
+            } catch (error) {
+                showApiResponse(responseDiv, `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testTaskResult() {
+            const taskId = document.getElementById('result-task-id').value;
+            const format = document.getElementById('result-format').value;
+            const responseDiv = document.getElementById('result-response');
+
+            if (!taskId) {
+                showApiResponse(responseDiv, 'Please enter a task ID', 'error');
+                return;
+            }
+
+            try {
+                showApiResponse(responseDiv, 'Fetching task result...', 'info');
+                const url = `/tasks/${taskId}/result${format ? `?format=${format}` : ''}`;
+                const response = await fetch(url);
+
+                const contentType = response.headers.get('content-type');
+                let result;
+
+                if (contentType && contentType.includes('application/json')) {
+                    result = await response.json();
+                    showApiResponse(responseDiv, JSON.stringify(result, null, 2), response.ok ? 'success' : 'error');
+                } else {
+                    result = await response.text();
+                    showApiResponse(responseDiv, result, response.ok ? 'success' : 'error');
+                }
+            } catch (error) {
+                showApiResponse(responseDiv, `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testHealth() {
+            const responseDiv = document.getElementById('health-response');
+
+            try {
+                showApiResponse(responseDiv, 'Checking health...', 'info');
+                const response = await fetch('/health');
+                const result = await response.json();
+                showApiResponse(responseDiv, JSON.stringify(result, null, 2), response.ok ? 'success' : 'error');
+            } catch (error) {
+                showApiResponse(responseDiv, `Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testModels() {
+            const responseDiv = document.getElementById('models-response');
+
+            try {
+                showApiResponse(responseDiv, 'Fetching models...', 'info');
+                const response = await fetch('/models');
+                const result = await response.json();
+                showApiResponse(responseDiv, JSON.stringify(result, null, 2), response.ok ? 'success' : 'error');
+            } catch (error) {
+                showApiResponse(responseDiv, `Error: ${error.message}`, 'error');
+            }
+        }
+
+        function showApiResponse(responseDiv, content, type) {
+            responseDiv.style.display = 'block';
+            responseDiv.textContent = content;
+            responseDiv.className = `api-response ${type}`;
+        }
     </script>
 </body>
 </html>

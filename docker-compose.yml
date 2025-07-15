@@ -8,6 +8,7 @@ services:
     environment:
       - MODE=web
       - WORKERS=4  # Enable multithreading with 4 workers
+      - MAX_PARALLEL_PROCESSING=1  # Limit parallel processing (default: 1)
       - HOST=0.0.0.0
       - PORT=8000
       - TRANSCRIPTION_API_KEY=${TRANSCRIPTION_API_KEY:-}
@@ -30,6 +31,7 @@ services:
     environment:
       - MODE=web
       - WORKERS=1  # Single-threaded mode
+      - MAX_PARALLEL_PROCESSING=1  # Limit parallel processing (default: 1)
       - HOST=0.0.0.0
       - PORT=8000
     volumes:

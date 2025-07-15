@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import sys
-import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -17,7 +16,6 @@ from typing import List, Optional
 import psutil
 import uvicorn
 from fastapi import (
-    BackgroundTasks,
     Depends,
     FastAPI,
     File,
@@ -35,7 +33,6 @@ try:
     from prometheus_client import (
         CONTENT_TYPE_LATEST,
         REGISTRY,
-        CollectorRegistry,
         Counter,
         Gauge,
         Histogram,
@@ -245,8 +242,9 @@ def get_transcription_service(model_name: str) -> TranscriptionService:
 
 
 # Thread pool for formatting tasks only (reduced since no sync transcription)
+MAX_PARALLEL_PROCESSING = int(os.environ.get("MAX_PARALLEL_PROCESSING", "1"))
 transcription_executor = ThreadPoolExecutor(
-    max_workers=2, thread_name_prefix="formatting-"
+    max_workers=MAX_PARALLEL_PROCESSING, thread_name_prefix="formatting-"
 )
 
 # Global stats for monitoring
@@ -284,7 +282,7 @@ def verify_api_key(authorization: Optional[str] = Header(None)):
 
 
 def get_error_response(
-    error_message: str, error_code: str = None, http_status: int = 500
+    error_message: str, error_code: Optional[str] = None, http_status: int = 500
 ):
     """Create standardized error response"""
     error_codes = {
@@ -365,10 +363,11 @@ async def logging_middleware(request: Request, call_next):
 
         # Update error metrics
         endpoint = request.url.path
+        error_type = type(e).__name__
         safe_metric_update(
             "error_count",
             lambda: metrics["error_count"]
-            .labels(error_type=type(e).__name__, endpoint=endpoint)
+            .labels(error_type=error_type, endpoint=endpoint)
             .inc(),
         )
 

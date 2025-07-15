@@ -30,7 +30,7 @@ class TaskMetadata:
     created_at: str
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
-    ttl_expires_at: str = None
+    ttl_expires_at: Optional[str] = None
     file_size: int = 0
     error_message: Optional[str] = None
     processing_duration: Optional[float] = None
@@ -52,17 +52,19 @@ class AsyncStorage:
             dir_path.mkdir(parents=True, exist_ok=True)
 
         # Thread pool for background processing
+        max_parallel_processing = int(os.environ.get("MAX_PARALLEL_PROCESSING", "1"))
         self.executor = ThreadPoolExecutor(
-            max_workers=8, thread_name_prefix="async-transcription-"
+            max_workers=max_parallel_processing,
+            thread_name_prefix="async-transcription-",
         )
-        self.processing_queue = asyncio.Queue()
+        self.processing_queue: asyncio.Queue = asyncio.Queue()
 
         # Start background cleanup thread
         self.cleanup_thread = threading.Thread(target=self._cleanup_worker, daemon=True)
         self.cleanup_thread.start()
 
         # Cache for transcription services
-        self.transcription_services = {}
+        self.transcription_services: Dict[str, TranscriptionService] = {}
         self.transcription_services_lock = threading.Lock()
 
     def _calculate_file_hash(self, content: bytes) -> str:
@@ -88,7 +90,7 @@ class AsyncStorage:
             return None
 
         try:
-            with open(task_path, "r") as f:
+            with open(task_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return TaskMetadata(**data)
         except (json.JSONDecodeError, TypeError):
@@ -97,14 +99,14 @@ class AsyncStorage:
     def _save_task(self, task: TaskMetadata):
         """Save task metadata to disk"""
         task_path = self._get_task_path(task.id)
-        with open(task_path, "w") as f:
+        with open(task_path, "w", encoding="utf-8") as f:
             json.dump(asdict(task), f, indent=2)
 
     def _find_task_by_hash(self, file_hash: str) -> Optional[str]:
         """Find existing task ID for a file hash"""
         for task_file in self.tasks_dir.glob("*.json"):
             try:
-                with open(task_file, "r") as f:
+                with open(task_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if data.get("file_hash") == file_hash:
                     return data.get("id")
@@ -227,7 +229,7 @@ class AsyncStorage:
             return None
 
         try:
-            with open(result_path, "r") as f:
+            with open(result_path, "r", encoding="utf-8") as f:
                 result = json.load(f)
 
             # Add metadata
@@ -278,7 +280,7 @@ class AsyncStorage:
 
             # Save result
             result_path = self._get_result_path(task_id)
-            with open(result_path, "w") as f:
+            with open(result_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, indent=2, ensure_ascii=False)
 
             # Update task status
@@ -295,10 +297,11 @@ class AsyncStorage:
 
         except Exception as e:
             # Update task with error
-            task.status = "failed"
-            task.error_message = str(e)
-            task.completed_at = datetime.utcnow().isoformat()
-            self._save_task(task)
+            if task:
+                task.status = "failed"
+                task.error_message = str(e)
+                task.completed_at = datetime.utcnow().isoformat()
+                self._save_task(task)
 
     async def start_processing_loop(self):
         """Start the async processing loop"""
@@ -338,12 +341,13 @@ class AsyncStorage:
         expired_tasks = []
         for task_file in self.tasks_dir.glob("*.json"):
             try:
-                with open(task_file, "r") as f:
+                with open(task_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
-                ttl_expires = datetime.fromisoformat(data.get("ttl_expires_at", ""))
-                if now > ttl_expires:
-                    expired_tasks.append(data)
+                if data.get("ttl_expires_at"):
+                    ttl_expires = datetime.fromisoformat(data.get("ttl_expires_at"))
+                    if now > ttl_expires:
+                        expired_tasks.append(data)
 
             except (json.JSONDecodeError, ValueError, KeyError):
                 # Invalid task file, remove it
@@ -368,7 +372,7 @@ class AsyncStorage:
 
     def list_tasks(self, limit: int = 100) -> List[Dict]:
         """List recent tasks (for debugging/admin)"""
-        tasks = []
+        tasks: List[Dict] = []
         for task_file in sorted(
             self.tasks_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
         ):
@@ -376,7 +380,7 @@ class AsyncStorage:
                 break
 
             try:
-                with open(task_file, "r") as f:
+                with open(task_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 tasks.append(data)
             except (json.JSONDecodeError, IOError):
